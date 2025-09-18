@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ADS-B Aircraft Monitor
+Ursine Explorer - ADS-B Aircraft Monitor
 Monitors dump1090 output for specific ICAO codes and sends Discord notifications
 """
 
@@ -38,7 +38,7 @@ class ADSBMonitor:
             level=getattr(logging, log_level),
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('adsb-monitor.log'),
+                logging.FileHandler('ursine-explorer.log'),
                 logging.StreamHandler()
             ]
         )
@@ -130,7 +130,7 @@ class ADSBMonitor:
     
     def run(self):
         """Main monitoring loop"""
-        logging.info("Starting ADS-B monitor...")
+        logging.info("Starting Ursine Explorer...")
         logging.info(f"Monitoring ICAO codes: {', '.join(self.config['target_icao_codes'])}")
         
         while True:
@@ -142,7 +142,7 @@ class ADSBMonitor:
                 time.sleep(self.config.get('poll_interval_seconds', 5))
                 
             except KeyboardInterrupt:
-                logging.info("Shutting down ADS-B monitor...")
+                logging.info("Shutting down Ursine Explorer...")
                 break
             except Exception as e:
                 logging.error(f"Unexpected error: {e}")

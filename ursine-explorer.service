@@ -1,14 +1,14 @@
 [Unit]
-Description=ADS-B Aircraft Monitor
+Description=Ursine Explorer - ADS-B Aircraft Monitor
 After=network.target dump1090-mutability.service
 Wants=dump1090-mutability.service
 
 [Service]
 Type=simple
-User=adsb
-Group=adsb
-WorkingDirectory=/opt/adsb-monitor
-ExecStart=/usr/bin/python3 /opt/adsb-monitor/monitor.py
+User=ursine
+Group=ursine
+WorkingDirectory=/opt/ursine-explorer
+ExecStart=/usr/bin/python3 /opt/ursine-explorer/monitor.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/adsb-monitor
+ReadWritePaths=/opt/ursine-explorer
 
 [Install]
 WantedBy=multi-user.target

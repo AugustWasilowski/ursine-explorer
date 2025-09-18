@@ -1,4 +1,4 @@
-# ADS-B Aircraft Monitor
+# Ursine Explorer
 
 A Python application that monitors ADS-B signals via RTL-SDR and sends Discord notifications when specific aircraft (by ICAO code) are detected.
 
@@ -21,8 +21,8 @@ A Python application that monitors ADS-B signals via RTL-SDR and sends Discord n
 
 1. **Clone and install:**
    ```bash
-   git clone <your-repo>
-   cd adsb-monitor
+   git clone https://github.com/AugustWasilowski/ursine-explorer.git
+   cd ursine-explorer
    chmod +x install.sh
    sudo ./install.sh
    ```
@@ -34,7 +34,7 @@ A Python application that monitors ADS-B signals via RTL-SDR and sends Discord n
 
 3. **Edit configuration:**
    ```bash
-   sudo nano /opt/adsb-monitor/config.json
+   sudo nano /opt/ursine-explorer/config.json
    ```
    
    Update:
@@ -43,8 +43,8 @@ A Python application that monitors ADS-B signals via RTL-SDR and sends Discord n
 
 4. **Start the service:**
    ```bash
-   sudo systemctl enable adsb-monitor
-   sudo systemctl start adsb-monitor
+   sudo systemctl enable ursine-explorer
+   sudo systemctl start ursine-explorer
    ```
 
 ## Configuration Options
@@ -71,17 +71,17 @@ You can find aircraft ICAO codes using:
 
 **Check service status:**
 ```bash
-sudo systemctl status adsb-monitor
+sudo systemctl status ursine-explorer
 ```
 
 **View logs:**
 ```bash
-sudo journalctl -u adsb-monitor -f
+sudo journalctl -u ursine-explorer -f
 ```
 
 **Test manually:**
 ```bash
-sudo -u adsb python3 /opt/adsb-monitor/monitor.py
+sudo -u ursine python3 /opt/ursine-explorer/monitor.py
 ```
 
 **Check dump1090:**
@@ -102,7 +102,7 @@ When a target aircraft is detected, you'll receive a Discord message with:
 
 ## Security Notes
 
-- The service runs as a dedicated `adsb` user with minimal privileges
+- The service runs as a dedicated `ursine` user with minimal privileges
 - Only necessary directories are writable
 - Network access is limited to dump1090 and Discord webhook
 
@@ -130,4 +130,4 @@ You can modify `monitor.py` to:
 **Service won't start:**
 - Check configuration file syntax: `python3 -m json.tool config.json`
 - Verify file permissions
-- Check system logs: `sudo journalctl -u adsb-monitor`
+- Check system logs: `sudo journalctl -u ursine-explorer`
