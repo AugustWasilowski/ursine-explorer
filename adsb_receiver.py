@@ -30,34 +30,67 @@ class ADSBReceiver(gr.top_block):
         # Variables
         self.samp_rate = 2000000
         self.center_freq = 1090000000
+        self._running = False
         
-        # Blocks
-        self.osmosdr_source = osmosdr.source(args="hackrf=0")
-        self.osmosdr_source.set_sample_rate(self.samp_rate)
-        self.osmosdr_source.set_center_freq(self.center_freq, 0)
-        self.osmosdr_source.set_freq_corr(0, 0)
-        self.osmosdr_source.set_dc_offset_mode(0, 0)
-        self.osmosdr_source.set_iq_balance_mode(0, 0)
-        self.osmosdr_source.set_gain_mode(False, 0)  # Manual gain control
-        
-        # Optimized gain settings for ADS-B reception
-        self.osmosdr_source.set_gain(40, 0)      # RF gain: 40 dB (was 14)
-        self.osmosdr_source.set_if_gain(32, 0)   # IF gain: 32 dB (was 20) 
-        self.osmosdr_source.set_bb_gain(32, 0)   # BB gain: 32 dB (was 20)
-        
-        self.osmosdr_source.set_antenna('', 0)
-        self.osmosdr_source.set_bandwidth(0, 0)  # Use default bandwidth
-        
-        # Simplified approach - just magnitude detection for ADS-B
-        self.complex_to_mag = blocks.complex_to_mag()
-        
-        # File sink for debugging (optional)
-        self.file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/adsb_output.dat", False)
-        self.file_sink.set_unbuffered(False)
-        
-        # Connect blocks - simplified chain
-        self.connect((self.osmosdr_source, 0), (self.complex_to_mag, 0))
-        self.connect((self.complex_to_mag, 0), (self.file_sink, 0))
+        try:
+            # Blocks
+            self.osmosdr_source = osmosdr.source(args="hackrf=0")
+            self.osmosdr_source.set_sample_rate(self.samp_rate)
+            self.osmosdr_source.set_center_freq(self.center_freq, 0)
+            self.osmosdr_source.set_freq_corr(0, 0)
+            self.osmosdr_source.set_dc_offset_mode(0, 0)
+            self.osmosdr_source.set_iq_balance_mode(0, 0)
+            self.osmosdr_source.set_gain_mode(False, 0)  # Manual gain control
+            
+            # Optimized gain settings for ADS-B reception
+            self.osmosdr_source.set_gain(40, 0)      # RF gain: 40 dB (was 14)
+            self.osmosdr_source.set_if_gain(32, 0)   # IF gain: 32 dB (was 20) 
+            self.osmosdr_source.set_bb_gain(32, 0)   # BB gain: 32 dB (was 20)
+            
+            self.osmosdr_source.set_antenna('', 0)
+            self.osmosdr_source.set_bandwidth(0, 0)  # Use default bandwidth
+            
+            # Simplified approach - just magnitude detection for ADS-B
+            self.complex_to_mag = blocks.complex_to_mag()
+            
+            # File sink for debugging (optional)
+            self.file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/adsb_output.dat", False)
+            self.file_sink.set_unbuffered(False)
+            
+            # Connect blocks - simplified chain
+            self.connect((self.osmosdr_source, 0), (self.complex_to_mag, 0))
+            self.connect((self.complex_to_mag, 0), (self.file_sink, 0))
+            
+        except Exception as e:
+            print(f"❌ Failed to initialize GNU Radio blocks: {e}")
+            raise
+    
+    def start(self):
+        """Override start to track running state"""
+        try:
+            result = super().start()
+            self._running = True
+            return result
+        except Exception as e:
+            print(f"❌ Failed to start GNU Radio: {e}")
+            raise
+    
+    def stop(self):
+        """Override stop for better cleanup"""
+        if self._running:
+            try:
+                super().stop()
+                self._running = False
+            except Exception as e:
+                print(f"⚠️ Error stopping GNU Radio: {e}")
+    
+    def wait(self):
+        """Override wait with timeout"""
+        if self._running:
+            try:
+                super().wait()
+            except Exception as e:
+                print(f"⚠️ Error waiting for GNU Radio: {e}")
 
 class ADSBHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -136,9 +169,17 @@ class ADSBServer:
             self.receiver = ADSBReceiver()
             self.receiver.start()
             print(f"✅ HackRF receiver started on 1090 MHz")
+            
+            # Give it a moment to initialize
+            time.sleep(0.5)
             return True
         except Exception as e:
             print(f"❌ Failed to start receiver: {e}")
+            if self.receiver:
+                try:
+                    self.receiver.stop()
+                except:
+                    pass
             return False
     
     def set_rf_gain(self, gain: float) -> bool:
@@ -219,19 +260,67 @@ class ADSBServer:
     def stop(self):
         """Stop the receiver and HTTP server"""
         print("\n🛑 Shutting down ADS-B receiver...")
+        
+        # Stop GNU Radio flowgraph first (most important for clean shutdown)
         if self.receiver:
-            self.receiver.stop()
-            self.receiver.wait()
+            try:
+                print("🔧 Stopping GNU Radio flowgraph...")
+                self.receiver.stop()
+                
+                # Use a timeout for waiting
+                def wait_with_timeout():
+                    try:
+                        self.receiver.wait()
+                    except Exception as e:
+                        print(f"⚠️ GNU Radio wait error: {e}")
+                
+                wait_thread = threading.Thread(target=wait_with_timeout)
+                wait_thread.daemon = True
+                wait_thread.start()
+                wait_thread.join(timeout=3.0)  # 3 second timeout
+                
+                if wait_thread.is_alive():
+                    print("⚠️ GNU Radio wait timeout - forcing shutdown")
+                else:
+                    print("✅ GNU Radio stopped")
+                    
+            except Exception as e:
+                print(f"⚠️ GNU Radio stop error: {e}")
+        
+        # Stop HTTP server
         if self.httpd:
-            self.httpd.shutdown()
+            try:
+                print("🔧 Stopping HTTP server...")
+                self.httpd.shutdown()
+                self.httpd.server_close()
+                print("✅ HTTP server stopped")
+            except Exception as e:
+                print(f"⚠️ HTTP server stop error: {e}")
+        
+        # Stop control server
         if self.control_server:
-            self.control_server.shutdown()
+            try:
+                print("🔧 Stopping control server...")
+                self.control_server.shutdown()
+                self.control_server.server_close()
+                print("✅ Control server stopped")
+            except Exception as e:
+                print(f"⚠️ Control server stop error: {e}")
+        
+        print("✅ Shutdown complete")
 
 def signal_handler(sig, frame):
     print('\n🛑 Received interrupt signal')
     if hasattr(signal_handler, 'server'):
-        signal_handler.server.stop()
-    sys.exit(0)
+        try:
+            signal_handler.server.stop()
+        except Exception as e:
+            print(f"⚠️ Error during shutdown: {e}")
+    
+    # Force exit if needed
+    print("🔄 Forcing exit...")
+    import os
+    os._exit(0)
 
 def main():
     print("🛩️ GNU Radio ADS-B Receiver for HackRF")
@@ -267,7 +356,14 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
+        print("\n🛑 Keyboard interrupt received")
         server.stop()
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+        server.stop()
+    finally:
+        print("🔄 Exiting main thread...")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
