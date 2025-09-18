@@ -158,20 +158,23 @@ class ADSBDashboard:
         stdscr.addstr(0, max(0, (width - len(title)) // 2), title, curses.A_BOLD | curses.color_pair(1))
         
         # Stats line
-        stats_line = f"Active: {self.stats['active_aircraft']} | Total: {self.stats['total_aircraft']} | Messages: {self.stats['messages_total']} | Errors: {self.stats['errors']}"
+        stats_line = f"Active: {self.stats['active_aircraft']} | Total Seen: {self.stats['total_aircraft']} | Messages: {self.stats['messages_total']} | Errors: {self.stats['errors']}"
         if self.stats['last_update']:
             age = int((datetime.now() - self.stats['last_update']).total_seconds())
-            stats_line += f" | Last Update: {age}s ago"
+            stats_line += f" | Updated: {age}s ago"
+        else:
+            stats_line += " | Waiting for data..."
         
         stdscr.addstr(1, 0, stats_line[:width-1])
         
-        # Target aircraft line
+        # Target aircraft line (optional - only show if targets are configured)
+        header_y = 3
         if self.config['target_icao_codes']:
-            target_line = f"Monitoring: {', '.join(self.config['target_icao_codes'])}"
+            target_line = f"Targets: {', '.join(self.config['target_icao_codes'])} (highlighted in green)"
             stdscr.addstr(2, 0, target_line[:width-1], curses.color_pair(2))
+            header_y = 4
         
         # Column headers
-        header_y = 4 if self.config['target_icao_codes'] else 3
         header = f"{'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
         stdscr.addstr(header_y, 0, header[:width-1], curses.A_BOLD)
         
