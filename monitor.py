@@ -34,11 +34,17 @@ class ADSBMonitor:
     def setup_logging(self):
         """Setup logging configuration"""
         log_level = self.config.get('log_level', 'INFO')
+        
+        # Use the same directory as the script for log file
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, 'ursine-explorer.log')
+        
         logging.basicConfig(
             level=getattr(logging, log_level),
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('ursine-explorer.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
