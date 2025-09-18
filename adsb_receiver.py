@@ -36,12 +36,15 @@ class ADSBReceiver(gr.top_block):
         self.osmosdr_source.set_freq_corr(0, 0)
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
-        self.osmosdr_source.set_gain_mode(False, 0)
-        self.osmosdr_source.set_gain(14, 0)
-        self.osmosdr_source.set_if_gain(20, 0)
-        self.osmosdr_source.set_bb_gain(20, 0)
+        self.osmosdr_source.set_gain_mode(False, 0)  # Manual gain control
+        
+        # Optimized gain settings for ADS-B reception
+        self.osmosdr_source.set_gain(40, 0)      # RF gain: 40 dB (was 14)
+        self.osmosdr_source.set_if_gain(32, 0)   # IF gain: 32 dB (was 20) 
+        self.osmosdr_source.set_bb_gain(32, 0)   # BB gain: 32 dB (was 20)
+        
         self.osmosdr_source.set_antenna('', 0)
-        self.osmosdr_source.set_bandwidth(0, 0)
+        self.osmosdr_source.set_bandwidth(0, 0)  # Use default bandwidth
         
         # Simplified approach - just magnitude detection for ADS-B
         self.complex_to_mag = blocks.complex_to_mag()
