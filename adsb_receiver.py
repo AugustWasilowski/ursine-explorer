@@ -14,7 +14,7 @@ import sys
 
 try:
     from gnuradio import gr, blocks, filter, analog, digital
-    from gnuradio import osmosdr
+    import osmosdr  # Import osmosdr directly, not from gnuradio
     import numpy as np
 except ImportError as e:
     print(f"GNU Radio not properly installed: {e}")
