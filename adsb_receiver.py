@@ -7,6 +7,8 @@ Receives ADS-B signals and outputs aircraft data in dump1090-compatible JSON for
 import json
 import time
 import threading
+import socket
+import socketserver
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 import signal
@@ -81,10 +83,46 @@ class ADSBHTTPHandler(BaseHTTPRequestHandler):
         # Suppress HTTP server logs
         pass
 
+class ControlHandler(socketserver.BaseRequestHandler):
+    """Handle control commands from dashboard"""
+    
+    def handle(self):
+        try:
+            data = self.request.recv(1024).decode().strip()
+            if ':' in data:
+                command, value = data.split(':', 1)
+                value = float(value)
+            else:
+                command = data
+                value = None
+            
+            # Get the server instance
+            server = self.server.adsb_server
+            success = False
+            
+            if command == 'SET_RF_GAIN' and value is not None:
+                success = server.set_rf_gain(value)
+            elif command == 'SET_IF_GAIN' and value is not None:
+                success = server.set_if_gain(value)
+            elif command == 'SET_BB_GAIN' and value is not None:
+                success = server.set_bb_gain(value)
+            elif command == 'SET_SAMPLE_RATE' and value is not None:
+                success = server.set_sample_rate(value)
+            elif command == 'SET_CENTER_FREQ' and value is not None:
+                success = server.set_center_freq(value)
+            
+            response = "OK" if success else "ERROR"
+            self.request.sendall(response.encode())
+            
+        except Exception as e:
+            self.request.sendall(b"ERROR")
+
 class ADSBServer:
-    def __init__(self, port=8080):
+    def __init__(self, port=8080, control_port=8081):
         self.port = port
+        self.control_port = control_port
         self.httpd = None
+        self.control_server = None
         self.receiver = None
         
     def start_receiver(self):
@@ -98,6 +136,71 @@ class ADSBServer:
         except Exception as e:
             print(f"❌ Failed to start receiver: {e}")
             return False
+    
+    def set_rf_gain(self, gain: float) -> bool:
+        """Set RF gain on HackRF"""
+        try:
+            if self.receiver and 0 <= gain <= 47:
+                self.receiver.osmosdr_source.set_gain(gain, 0)
+                print(f"🔧 RF Gain set to {gain} dB")
+                return True
+        except Exception as e:
+            print(f"❌ Failed to set RF gain: {e}")
+        return False
+    
+    def set_if_gain(self, gain: float) -> bool:
+        """Set IF gain on HackRF"""
+        try:
+            if self.receiver and 0 <= gain <= 47:
+                self.receiver.osmosdr_source.set_if_gain(gain, 0)
+                print(f"🔧 IF Gain set to {gain} dB")
+                return True
+        except Exception as e:
+            print(f"❌ Failed to set IF gain: {e}")
+        return False
+    
+    def set_bb_gain(self, gain: float) -> bool:
+        """Set BB gain on HackRF"""
+        try:
+            if self.receiver and 0 <= gain <= 62:
+                self.receiver.osmosdr_source.set_bb_gain(gain, 0)
+                print(f"🔧 BB Gain set to {gain} dB")
+                return True
+        except Exception as e:
+            print(f"❌ Failed to set BB gain: {e}")
+        return False
+    
+    def set_sample_rate(self, rate: float) -> bool:
+        """Set sample rate on HackRF"""
+        try:
+            if self.receiver and 1000000 <= rate <= 20000000:
+                self.receiver.osmosdr_source.set_sample_rate(rate)
+                print(f"🔧 Sample rate set to {rate/1e6:.1f} MHz")
+                return True
+        except Exception as e:
+            print(f"❌ Failed to set sample rate: {e}")
+        return False
+    
+    def set_center_freq(self, freq: float) -> bool:
+        """Set center frequency on HackRF"""
+        try:
+            if self.receiver and 1000000 <= freq <= 6000000000:
+                self.receiver.osmosdr_source.set_center_freq(freq, 0)
+                print(f"🔧 Center frequency set to {freq/1e6:.1f} MHz")
+                return True
+        except Exception as e:
+            print(f"❌ Failed to set center frequency: {e}")
+        return False
+    
+    def start_control_server(self):
+        """Start control server for dashboard commands"""
+        try:
+            self.control_server = socketserver.TCPServer(('localhost', self.control_port), ControlHandler)
+            self.control_server.adsb_server = self  # Pass reference to self
+            print(f"✅ Control server started on port {self.control_port}")
+            self.control_server.serve_forever()
+        except Exception as e:
+            print(f"❌ Failed to start control server: {e}")
     
     def start_http_server(self):
         """Start HTTP server for aircraft data"""
@@ -117,6 +220,8 @@ class ADSBServer:
             self.receiver.wait()
         if self.httpd:
             self.httpd.shutdown()
+        if self.control_server:
+            self.control_server.shutdown()
 
 def signal_handler(sig, frame):
     print('\n🛑 Received interrupt signal')
@@ -144,8 +249,14 @@ def main():
     http_thread.daemon = True
     http_thread.start()
     
+    # Start control server in a separate thread
+    control_thread = threading.Thread(target=server.start_control_server)
+    control_thread.daemon = True
+    control_thread.start()
+    
     print("\n📡 Receiver running... Press Ctrl+C to stop")
     print("🔍 Monitor with: curl http://localhost:8080/data/aircraft.json")
+    print("⚙️ Control via dashboard on port 8081")
     
     try:
         # Keep the main thread alive

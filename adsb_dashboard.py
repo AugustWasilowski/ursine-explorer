@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import signal
 import sys
+import socket
+import struct
 
 class Aircraft:
     def __init__(self, data: dict):
@@ -55,6 +57,24 @@ class ADSBDashboard:
         self.config = self.load_config(config_path)
         self.aircraft: Dict[str, Aircraft] = {}
         self.running = True
+        
+        # Menu system
+        self.menu_active = False
+        self.menu_items = ['RF Gain', 'IF Gain', 'BB Gain', 'Sample Rate', 'Center Freq', 'Exit Menu']
+        self.menu_selected = 0
+        self.input_mode = False
+        self.input_buffer = ""
+        self.input_prompt = ""
+        
+        # HackRF settings with safe ranges
+        self.hackrf_settings = {
+            'rf_gain': {'value': 40, 'min': 0, 'max': 47, 'unit': 'dB'},
+            'if_gain': {'value': 32, 'min': 0, 'max': 47, 'unit': 'dB'},
+            'bb_gain': {'value': 32, 'min': 0, 'max': 62, 'unit': 'dB'},
+            'sample_rate': {'value': 2000000, 'min': 1000000, 'max': 20000000, 'unit': 'Hz'},
+            'center_freq': {'value': 1090000000, 'min': 1000000000, 'max': 1200000000, 'unit': 'Hz'}
+        }
+        
         self.stats = {
             'total_aircraft': 0,
             'active_aircraft': 0,
@@ -82,6 +102,7 @@ class ADSBDashboard:
                 # Set defaults if not present
                 config.setdefault('dump1090_host', 'localhost')
                 config.setdefault('dump1090_port', 8080)
+                config.setdefault('receiver_control_port', 8081)
                 config.setdefault('target_icao_codes', [])
                 return config
         except FileNotFoundError:
@@ -89,8 +110,69 @@ class ADSBDashboard:
             return {
                 'dump1090_host': 'localhost',
                 'dump1090_port': 8080,
+                'receiver_control_port': 8081,
                 'target_icao_codes': []
             }
+    
+    def send_receiver_command(self, command: str, value: float = None) -> bool:
+        """Send command to ADS-B receiver for gain adjustment"""
+        try:
+            # Create a simple TCP connection to send commands
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((self.config['dump1090_host'], self.config['receiver_control_port']))
+            
+            if value is not None:
+                message = f"{command}:{value}\n"
+            else:
+                message = f"{command}\n"
+            
+            sock.send(message.encode())
+            response = sock.recv(1024).decode().strip()
+            sock.close()
+            
+            return response == "OK"
+        except Exception:
+            return False
+    
+    def validate_setting(self, setting_name: str, value: str) -> tuple[bool, float, str]:
+        """Validate a setting value and return (valid, parsed_value, error_message)"""
+        try:
+            parsed_value = float(value)
+            setting = self.hackrf_settings.get(setting_name)
+            
+            if not setting:
+                return False, 0, "Unknown setting"
+            
+            if parsed_value < setting['min'] or parsed_value > setting['max']:
+                return False, 0, f"Value must be between {setting['min']} and {setting['max']} {setting['unit']}"
+            
+            # Additional validation for specific settings
+            if setting_name == 'sample_rate' and parsed_value % 1000000 != 0:
+                return False, 0, "Sample rate must be a multiple of 1MHz"
+            
+            return True, parsed_value, ""
+        except ValueError:
+            return False, 0, "Invalid number format"
+    
+    def apply_setting(self, setting_name: str, value: float) -> bool:
+        """Apply a setting to the HackRF"""
+        command_map = {
+            'rf_gain': 'SET_RF_GAIN',
+            'if_gain': 'SET_IF_GAIN', 
+            'bb_gain': 'SET_BB_GAIN',
+            'sample_rate': 'SET_SAMPLE_RATE',
+            'center_freq': 'SET_CENTER_FREQ'
+        }
+        
+        command = command_map.get(setting_name)
+        if not command:
+            return False
+        
+        if self.send_receiver_command(command, value):
+            self.hackrf_settings[setting_name]['value'] = value
+            return True
+        return False
     
     def fetch_aircraft_data(self) -> Optional[dict]:
         """Fetch aircraft data from ADS-B receiver"""
@@ -205,18 +287,73 @@ class ADSBDashboard:
         
         return aircraft_list
     
+    def draw_menu(self, stdscr, width: int):
+        """Draw the configuration menu"""
+        menu_y = 1
+        
+        # Menu title
+        menu_title = "⚙️  HACKRF CONFIGURATION MENU  ⚙️"
+        stdscr.addstr(menu_y, max(0, (width - len(menu_title)) // 2), menu_title, curses.A_BOLD | curses.color_pair(1))
+        menu_y += 2
+        
+        # Current settings display
+        settings_line = f"RF: {self.hackrf_settings['rf_gain']['value']}dB | IF: {self.hackrf_settings['if_gain']['value']}dB | BB: {self.hackrf_settings['bb_gain']['value']}dB | Rate: {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz | Freq: {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz"
+        stdscr.addstr(menu_y, 0, settings_line[:width-1], curses.color_pair(4))
+        menu_y += 2
+        
+        # Menu items
+        for i, item in enumerate(self.menu_items):
+            if i == self.menu_selected:
+                attr = curses.A_REVERSE | curses.A_BOLD
+            else:
+                attr = curses.A_NORMAL
+            
+            # Add current value for settings
+            if item == 'RF Gain':
+                display_text = f"RF Gain: {self.hackrf_settings['rf_gain']['value']}dB (0-47dB)"
+            elif item == 'IF Gain':
+                display_text = f"IF Gain: {self.hackrf_settings['if_gain']['value']}dB (0-47dB)"
+            elif item == 'BB Gain':
+                display_text = f"BB Gain: {self.hackrf_settings['bb_gain']['value']}dB (0-62dB)"
+            elif item == 'Sample Rate':
+                display_text = f"Sample Rate: {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz (1-20MHz)"
+            elif item == 'Center Freq':
+                display_text = f"Center Freq: {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz (1000-1200MHz)"
+            else:
+                display_text = item
+            
+            stdscr.addstr(menu_y + i, 2, f"[{chr(65+i)}] {display_text}", attr)
+        
+        menu_y += len(self.menu_items) + 1
+        
+        # Instructions
+        if self.input_mode:
+            stdscr.addstr(menu_y, 0, f"{self.input_prompt}: {self.input_buffer}_", curses.color_pair(3))
+            stdscr.addstr(menu_y + 1, 0, "Enter new value (ESC to cancel, ENTER to apply)", curses.A_DIM)
+        else:
+            stdscr.addstr(menu_y, 0, "Use ↑↓ arrows to navigate, ENTER to select, ESC to exit menu", curses.A_DIM)
+        
+        return menu_y + 3
+    
     def draw_header(self, stdscr, height: int, width: int):
         """Draw dashboard header"""
+        if self.menu_active:
+            return self.draw_menu(stdscr, width)
+        
         title = "🛩️  URSINE EXPLORER - ADS-B LIVE DASHBOARD  🛩️"
         stdscr.addstr(0, max(0, (width - len(title)) // 2), title, curses.A_BOLD | curses.color_pair(1))
         
+        # HackRF settings line
+        hackrf_line = f"HackRF: RF={self.hackrf_settings['rf_gain']['value']}dB IF={self.hackrf_settings['if_gain']['value']}dB BB={self.hackrf_settings['bb_gain']['value']}dB | {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz @ {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz"
+        stdscr.addstr(1, 0, hackrf_line[:width-1], curses.color_pair(5))
+        
         # Aircraft stats line
         stats_line = f"Active: {self.stats['active_aircraft']} | Total Seen: {self.stats['total_aircraft']} | With Position: {self.stats['aircraft_with_positions']} | Max Range: {self.stats['max_range_km']:.1f}km"
-        stdscr.addstr(1, 0, stats_line[:width-1])
+        stdscr.addstr(2, 0, stats_line[:width-1])
         
         # Radio performance line
         perf_line = f"Messages: {self.stats['messages_total']} | Rate: {self.stats['messages_per_second']:.1f}/sec | Avg Signal: {self.stats['avg_signal_strength']:.1f}dBm | Strong: {self.stats['strong_signals']} | Weak: {self.stats['weak_signals']}"
-        stdscr.addstr(2, 0, perf_line[:width-1], curses.color_pair(4))
+        stdscr.addstr(3, 0, perf_line[:width-1], curses.color_pair(4))
         
         # System status line
         status_line = f"Updates: {self.stats['update_count']} | Errors: {self.stats['errors']}"
@@ -228,14 +365,14 @@ class ADSBDashboard:
         else:
             status_line += " | Waiting for data... 🔄"
         
-        stdscr.addstr(3, 0, status_line[:width-1])
+        stdscr.addstr(4, 0, status_line[:width-1])
         
         # Target aircraft line (optional - only show if targets are configured)
-        header_y = 5
+        header_y = 6
         if self.config['target_icao_codes']:
             target_line = f"🎯 Targets: {', '.join(self.config['target_icao_codes'])} (highlighted in green)"
-            stdscr.addstr(4, 0, target_line[:width-1], curses.color_pair(2))
-            header_y = 6
+            stdscr.addstr(5, 0, target_line[:width-1], curses.color_pair(2))
+            header_y = 7
         
         # Column headers
         header = f"{'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
@@ -274,8 +411,68 @@ class ADSBDashboard:
     def draw_footer(self, stdscr, height: int, width: int):
         """Draw dashboard footer with controls"""
         footer_y = height - 1
-        controls = f"Controls: q=quit | s=sort({self.sort_by}) | r=reverse | Space=refresh | HackRF: 1090MHz"
+        if self.menu_active:
+            controls = "Menu Mode: ↑↓=navigate | ENTER=select | ESC=exit | Type values and press ENTER"
+        else:
+            controls = f"Controls: q=quit | m=menu | s=sort({self.sort_by}) | r=reverse | Space=refresh"
         stdscr.addstr(footer_y, 0, controls[:width-1], curses.A_DIM)
+    
+    def handle_menu_input(self, key):
+        """Handle menu-specific input"""
+        if self.input_mode:
+            # Handle input mode
+            if key == 27:  # ESC
+                self.input_mode = False
+                self.input_buffer = ""
+                self.input_prompt = ""
+            elif key == 10 or key == 13:  # ENTER
+                # Apply the setting
+                setting_map = {
+                    0: 'rf_gain',
+                    1: 'if_gain', 
+                    2: 'bb_gain',
+                    3: 'sample_rate',
+                    4: 'center_freq'
+                }
+                
+                setting_name = setting_map.get(self.menu_selected)
+                if setting_name:
+                    valid, value, error = self.validate_setting(setting_name, self.input_buffer)
+                    if valid:
+                        if self.apply_setting(setting_name, value):
+                            # Success - exit input mode
+                            self.input_mode = False
+                            self.input_buffer = ""
+                            self.input_prompt = ""
+                        else:
+                            # Failed to apply - show error
+                            self.input_prompt = f"Failed to apply {setting_name}"
+                    else:
+                        # Validation error
+                        self.input_prompt = f"Error: {error}"
+                
+            elif key == 127 or key == 8:  # BACKSPACE
+                if self.input_buffer:
+                    self.input_buffer = self.input_buffer[:-1]
+            elif 32 <= key <= 126:  # Printable characters
+                self.input_buffer += chr(key)
+        else:
+            # Handle menu navigation
+            if key == curses.KEY_UP:
+                self.menu_selected = (self.menu_selected - 1) % len(self.menu_items)
+            elif key == curses.KEY_DOWN:
+                self.menu_selected = (self.menu_selected + 1) % len(self.menu_items)
+            elif key == 10 or key == 13:  # ENTER
+                if self.menu_selected == len(self.menu_items) - 1:  # Exit Menu
+                    self.menu_active = False
+                elif self.menu_selected < len(self.menu_items) - 1:
+                    # Start input for selected setting
+                    setting_names = ['RF Gain', 'IF Gain', 'BB Gain', 'Sample Rate', 'Center Freq']
+                    self.input_mode = True
+                    self.input_buffer = ""
+                    self.input_prompt = f"Enter new {setting_names[self.menu_selected]}"
+            elif key == 27:  # ESC
+                self.menu_active = False
     
     def handle_input(self, stdscr):
         """Handle keyboard input"""
@@ -285,18 +482,25 @@ class ADSBDashboard:
             try:
                 key = stdscr.getch()
                 
-                if key == ord('q') or key == ord('Q'):
-                    self.running = False
-                elif key == ord('s') or key == ord('S'):
-                    # Cycle through sort options
-                    sort_options = ['last_seen', 'altitude', 'speed', 'flight', 'hex']
-                    current_idx = sort_options.index(self.sort_by)
-                    self.sort_by = sort_options[(current_idx + 1) % len(sort_options)]
-                elif key == ord('r') or key == ord('R'):
-                    self.sort_reverse = not self.sort_reverse
-                elif key == ord(' '):
-                    # Force refresh
-                    pass
+                if self.menu_active:
+                    self.handle_menu_input(key)
+                else:
+                    # Normal dashboard controls
+                    if key == ord('q') or key == ord('Q'):
+                        self.running = False
+                    elif key == ord('m') or key == ord('M'):
+                        self.menu_active = True
+                        self.menu_selected = 0
+                    elif key == ord('s') or key == ord('S'):
+                        # Cycle through sort options
+                        sort_options = ['last_seen', 'altitude', 'speed', 'flight', 'hex']
+                        current_idx = sort_options.index(self.sort_by)
+                        self.sort_by = sort_options[(current_idx + 1) % len(sort_options)]
+                    elif key == ord('r') or key == ord('R'):
+                        self.sort_reverse = not self.sort_reverse
+                    elif key == ord(' '):
+                        # Force refresh
+                        pass
                     
             except curses.error:
                 pass
@@ -317,8 +521,9 @@ class ADSBDashboard:
         curses.start_color()
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)    # Title
         curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Target line
-        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)   # Target aircraft
+        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)   # Target aircraft / Input
         curses.init_pair(4, curses.COLOR_MAGENTA, curses.COLOR_BLACK) # Performance stats
+        curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLACK)   # HackRF settings
         
         # Start background data updater
         data_thread = threading.Thread(target=self.data_updater, daemon=True)
@@ -335,7 +540,8 @@ class ADSBDashboard:
                 
                 # Draw dashboard components
                 data_start_y = self.draw_header(stdscr, height, width)
-                self.draw_aircraft_list(stdscr, data_start_y, height, width)
+                if not self.menu_active:
+                    self.draw_aircraft_list(stdscr, data_start_y, height, width)
                 self.draw_footer(stdscr, height, width)
                 
                 stdscr.refresh()

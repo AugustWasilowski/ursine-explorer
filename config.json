@@ -1,12 +1,6 @@
 {
-  "target_icao_codes": [
-    "A12345",
-    "B67890"
-  ],
-  "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
-  "dump1090_host": "localhost",
-  "dump1090_port": 8080,
-  "poll_interval_seconds": 5,
-  "notification_cooldown_minutes": 30,
-  "log_level": "INFO"
+    "dump1090_host": "localhost",
+    "dump1090_port": 8080,
+    "receiver_control_port": 8081,
+    "target_icao_codes": []
 }
