@@ -43,10 +43,11 @@ class ADSBReceiver(gr.top_block):
         self.osmosdr_source.set_antenna('', 0)
         self.osmosdr_source.set_bandwidth(0, 0)
         
-        # Low pass filter - simplified for GNU Radio 3.10 compatibility
+        # Low pass filter - fixed band edges for 2MHz sample rate
+        # Cutoff at 800kHz with 200kHz transition for 2MHz sample rate
         self.low_pass_filter = filter.fir_filter_ccf(
             1,
-            filter.firdes.low_pass(1, self.samp_rate, 1000000, 500000)
+            filter.firdes.low_pass(1, self.samp_rate, 800000, 200000)
         )
         
         # AM demodulator
