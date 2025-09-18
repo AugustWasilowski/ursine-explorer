@@ -1,0 +1,25 @@
+[Unit]
+Description=ADS-B Aircraft Monitor
+After=network.target dump1090-mutability.service
+Wants=dump1090-mutability.service
+
+[Service]
+Type=simple
+User=adsb
+Group=adsb
+WorkingDirectory=/opt/adsb-monitor
+ExecStart=/usr/bin/python3 /opt/adsb-monitor/monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/adsb-monitor
+
+[Install]
+WantedBy=multi-user.target
