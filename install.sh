@@ -15,7 +15,7 @@ sudo apt install -y rtl-sdr dump1090-mutability python3 python3-pip
 
 # Install Python dependencies
 echo "Installing Python dependencies..."
-pip3 install requests
+sudo apt install -y python3-requests python3-full
 
 # Create service user (optional, for security)
 if ! id "ursine" &>/dev/null; then
