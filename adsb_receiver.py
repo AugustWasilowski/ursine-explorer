@@ -43,29 +43,16 @@ class ADSBReceiver(gr.top_block):
         self.osmosdr_source.set_antenna('', 0)
         self.osmosdr_source.set_bandwidth(0, 0)
         
-        # Low pass filter - fixed band edges for 2MHz sample rate
-        # Cutoff at 800kHz with 200kHz transition for 2MHz sample rate
-        self.low_pass_filter = filter.fir_filter_ccf(
-            1,
-            filter.firdes.low_pass(1, self.samp_rate, 800000, 200000)
-        )
-        
-        # AM demodulator
-        self.analog_am_demod = analog.am_demod_cf(
-            channel_rate=self.samp_rate,
-            audio_decim=1,
-            audio_pass=1000000,
-            audio_stop=1500000,
-        )
+        # Simplified approach - just magnitude detection for ADS-B
+        self.complex_to_mag = blocks.complex_to_mag()
         
         # File sink for debugging (optional)
         self.file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/adsb_output.dat", False)
         self.file_sink.set_unbuffered(False)
         
-        # Connect blocks
-        self.connect((self.osmosdr_source, 0), (self.low_pass_filter, 0))
-        self.connect((self.low_pass_filter, 0), (self.analog_am_demod, 0))
-        self.connect((self.analog_am_demod, 0), (self.file_sink, 0))
+        # Connect blocks - simplified chain
+        self.connect((self.osmosdr_source, 0), (self.complex_to_mag, 0))
+        self.connect((self.complex_to_mag, 0), (self.file_sink, 0))
 
 class ADSBHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
