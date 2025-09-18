@@ -60,11 +60,12 @@ class ADSBDashboard:
         
         # Menu system
         self.menu_active = False
-        self.menu_items = ['RF Gain', 'IF Gain', 'BB Gain', 'Sample Rate', 'Center Freq', 'Exit Menu']
+        self.menu_items = ['RF Gain', 'IF Gain', 'BB Gain', 'Sample Rate', 'Center Freq', 'Test Connection', 'Exit Menu']
         self.menu_selected = 0
         self.input_mode = False
         self.input_buffer = ""
         self.input_prompt = ""
+        self.connection_status = "Unknown"
         
         # HackRF settings with safe ranges
         self.hackrf_settings = {
@@ -114,7 +115,7 @@ class ADSBDashboard:
                 'target_icao_codes': []
             }
     
-    def send_receiver_command(self, command: str, value: float = None) -> bool:
+    def send_receiver_command(self, command: str, value: float = None) -> tuple[bool, str]:
         """Send command to ADS-B receiver for gain adjustment"""
         try:
             # Create a simple TCP connection to send commands
@@ -131,9 +132,13 @@ class ADSBDashboard:
             response = sock.recv(1024).decode().strip()
             sock.close()
             
-            return response == "OK"
-        except Exception:
-            return False
+            return response == "OK", response
+        except ConnectionRefusedError:
+            return False, "Connection refused - is receiver running?"
+        except socket.timeout:
+            return False, "Connection timeout"
+        except Exception as e:
+            return False, f"Connection error: {str(e)}"
     
     def validate_setting(self, setting_name: str, value: str) -> tuple[bool, float, str]:
         """Validate a setting value and return (valid, parsed_value, error_message)"""
@@ -155,7 +160,13 @@ class ADSBDashboard:
         except ValueError:
             return False, 0, "Invalid number format"
     
-    def apply_setting(self, setting_name: str, value: float) -> bool:
+    def test_connection(self) -> tuple[bool, str]:
+        """Test connection to receiver"""
+        success, message = self.send_receiver_command("PING")
+        self.connection_status = "Connected" if success else f"Disconnected ({message})"
+        return success, message
+    
+    def apply_setting(self, setting_name: str, value: float) -> tuple[bool, str]:
         """Apply a setting to the HackRF"""
         command_map = {
             'rf_gain': 'SET_RF_GAIN',
@@ -167,12 +178,13 @@ class ADSBDashboard:
         
         command = command_map.get(setting_name)
         if not command:
-            return False
+            return False, "Unknown command"
         
-        if self.send_receiver_command(command, value):
+        success, message = self.send_receiver_command(command, value)
+        if success:
             self.hackrf_settings[setting_name]['value'] = value
-            return True
-        return False
+            return True, "Applied successfully"
+        return False, message
     
     def fetch_aircraft_data(self) -> Optional[dict]:
         """Fetch aircraft data from ADS-B receiver"""
@@ -299,6 +311,12 @@ class ADSBDashboard:
         # Current settings display
         settings_line = f"RF: {self.hackrf_settings['rf_gain']['value']}dB | IF: {self.hackrf_settings['if_gain']['value']}dB | BB: {self.hackrf_settings['bb_gain']['value']}dB | Rate: {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz | Freq: {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz"
         stdscr.addstr(menu_y, 0, settings_line[:width-1], curses.color_pair(4))
+        menu_y += 1
+        
+        # Connection status
+        status_color = curses.color_pair(3) if "Connected" in self.connection_status else curses.color_pair(2)
+        status_line = f"Receiver Status: {self.connection_status}"
+        stdscr.addstr(menu_y, 0, status_line[:width-1], status_color)
         menu_y += 2
         
         # Menu items
@@ -319,6 +337,8 @@ class ADSBDashboard:
                 display_text = f"Sample Rate: {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz (1-20MHz)"
             elif item == 'Center Freq':
                 display_text = f"Center Freq: {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz (1000-1200MHz)"
+            elif item == 'Test Connection':
+                display_text = f"Test Connection (Status: {self.connection_status})"
             else:
                 display_text = item
             
@@ -439,14 +459,15 @@ class ADSBDashboard:
                 if setting_name:
                     valid, value, error = self.validate_setting(setting_name, self.input_buffer)
                     if valid:
-                        if self.apply_setting(setting_name, value):
+                        success, message = self.apply_setting(setting_name, value)
+                        if success:
                             # Success - exit input mode
                             self.input_mode = False
                             self.input_buffer = ""
                             self.input_prompt = ""
                         else:
-                            # Failed to apply - show error
-                            self.input_prompt = f"Failed to apply {setting_name}"
+                            # Failed to apply - show detailed error
+                            self.input_prompt = f"Failed: {message}"
                     else:
                         # Validation error
                         self.input_prompt = f"Error: {error}"
@@ -465,7 +486,10 @@ class ADSBDashboard:
             elif key == 10 or key == 13:  # ENTER
                 if self.menu_selected == len(self.menu_items) - 1:  # Exit Menu
                     self.menu_active = False
-                elif self.menu_selected < len(self.menu_items) - 1:
+                elif self.menu_selected == len(self.menu_items) - 2:  # Test Connection
+                    success, message = self.test_connection()
+                    self.input_prompt = f"Connection test: {message}"
+                elif self.menu_selected < len(self.menu_items) - 2:
                     # Start input for selected setting
                     setting_names = ['RF Gain', 'IF Gain', 'BB Gain', 'Sample Rate', 'Center Freq']
                     self.input_mode = True

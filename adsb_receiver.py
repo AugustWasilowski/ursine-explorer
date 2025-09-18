@@ -89,6 +89,8 @@ class ControlHandler(socketserver.BaseRequestHandler):
     def handle(self):
         try:
             data = self.request.recv(1024).decode().strip()
+            print(f"🔧 Received command: {data}")
+            
             if ':' in data:
                 command, value = data.split(':', 1)
                 value = float(value)
@@ -100,7 +102,9 @@ class ControlHandler(socketserver.BaseRequestHandler):
             server = self.server.adsb_server
             success = False
             
-            if command == 'SET_RF_GAIN' and value is not None:
+            if command == 'PING':
+                success = True  # Simple ping response
+            elif command == 'SET_RF_GAIN' and value is not None:
                 success = server.set_rf_gain(value)
             elif command == 'SET_IF_GAIN' and value is not None:
                 success = server.set_if_gain(value)
