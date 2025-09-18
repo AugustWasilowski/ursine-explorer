@@ -61,8 +61,16 @@ class ADSBDashboard:
             'messages_total': 0,
             'last_update': None,
             'update_count': 0,
-            'errors': 0
+            'errors': 0,
+            'messages_per_second': 0,
+            'aircraft_with_positions': 0,
+            'max_range_km': 0,
+            'avg_signal_strength': 0,
+            'strong_signals': 0,
+            'weak_signals': 0
         }
+        self.message_history = []  # Track message rates
+        self.signal_strengths = []  # Track signal strengths
         self.sort_by = 'last_seen'  # Options: last_seen, altitude, speed, flight, hex
         self.sort_reverse = True
         
@@ -103,10 +111,31 @@ class ADSBDashboard:
         current_time = datetime.now()
         current_aircraft = set()
         
-        # Update stats
+        # Update basic stats
+        prev_messages = self.stats['messages_total']
         self.stats['messages_total'] = aircraft_data.get('messages', 0)
         self.stats['last_update'] = current_time
         self.stats['update_count'] += 1
+        
+        # Calculate messages per second
+        if prev_messages > 0:
+            new_messages = self.stats['messages_total'] - prev_messages
+            self.message_history.append((current_time, new_messages))
+            # Keep only last 10 seconds of data
+            cutoff = current_time - timedelta(seconds=10)
+            self.message_history = [(t, m) for t, m in self.message_history if t > cutoff]
+            
+            if self.message_history:
+                total_messages = sum(m for _, m in self.message_history)
+                time_span = (self.message_history[-1][0] - self.message_history[0][0]).total_seconds()
+                self.stats['messages_per_second'] = total_messages / max(time_span, 1)
+        
+        # Reset performance counters
+        self.stats['aircraft_with_positions'] = 0
+        self.stats['max_range_km'] = 0
+        signal_strengths = []
+        self.stats['strong_signals'] = 0
+        self.stats['weak_signals'] = 0
         
         # Process each aircraft
         for ac_data in aircraft_data['aircraft']:
@@ -116,11 +145,35 @@ class ADSBDashboard:
                 
             current_aircraft.add(hex_code)
             
+            # Track aircraft with position data
+            if ac_data.get('lat') is not None and ac_data.get('lon') is not None:
+                self.stats['aircraft_with_positions'] += 1
+                
+                # Calculate approximate range (assuming receiver at 0,0 for demo)
+                lat, lon = ac_data.get('lat', 0), ac_data.get('lon', 0)
+                if lat != 0 and lon != 0:
+                    # Simple distance calculation (not accurate but gives an idea)
+                    range_km = ((lat**2 + lon**2) ** 0.5) * 111  # Rough km conversion
+                    self.stats['max_range_km'] = max(self.stats['max_range_km'], range_km)
+            
+            # Track signal strength (RSSI if available)
+            rssi = ac_data.get('rssi', ac_data.get('signal', None))
+            if rssi is not None:
+                signal_strengths.append(rssi)
+                if rssi > -40:  # Strong signal
+                    self.stats['strong_signals'] += 1
+                elif rssi < -70:  # Weak signal
+                    self.stats['weak_signals'] += 1
+            
             if hex_code in self.aircraft:
                 self.aircraft[hex_code].update(ac_data)
             else:
                 self.aircraft[hex_code] = Aircraft(ac_data)
                 self.stats['total_aircraft'] += 1
+        
+        # Update average signal strength
+        if signal_strengths:
+            self.stats['avg_signal_strength'] = sum(signal_strengths) / len(signal_strengths)
         
         # Remove aircraft not seen for more than 5 minutes
         cutoff_time = current_time - timedelta(minutes=5)
@@ -157,22 +210,32 @@ class ADSBDashboard:
         title = "🛩️  URSINE EXPLORER - ADS-B LIVE DASHBOARD  🛩️"
         stdscr.addstr(0, max(0, (width - len(title)) // 2), title, curses.A_BOLD | curses.color_pair(1))
         
-        # Stats line
-        stats_line = f"Active: {self.stats['active_aircraft']} | Total Seen: {self.stats['total_aircraft']} | Messages: {self.stats['messages_total']} | Errors: {self.stats['errors']}"
-        if self.stats['last_update']:
-            age = int((datetime.now() - self.stats['last_update']).total_seconds())
-            stats_line += f" | Updated: {age}s ago"
-        else:
-            stats_line += " | Waiting for data..."
-        
+        # Aircraft stats line
+        stats_line = f"Active: {self.stats['active_aircraft']} | Total Seen: {self.stats['total_aircraft']} | With Position: {self.stats['aircraft_with_positions']} | Max Range: {self.stats['max_range_km']:.1f}km"
         stdscr.addstr(1, 0, stats_line[:width-1])
         
+        # Radio performance line
+        perf_line = f"Messages: {self.stats['messages_total']} | Rate: {self.stats['messages_per_second']:.1f}/sec | Avg Signal: {self.stats['avg_signal_strength']:.1f}dBm | Strong: {self.stats['strong_signals']} | Weak: {self.stats['weak_signals']}"
+        stdscr.addstr(2, 0, perf_line[:width-1], curses.color_pair(4))
+        
+        # System status line
+        status_line = f"Updates: {self.stats['update_count']} | Errors: {self.stats['errors']}"
+        if self.stats['last_update']:
+            age = int((datetime.now() - self.stats['last_update']).total_seconds())
+            status_line += f" | Last Update: {age}s ago"
+            if age > 5:
+                status_line += " ⚠️"
+        else:
+            status_line += " | Waiting for data... 🔄"
+        
+        stdscr.addstr(3, 0, status_line[:width-1])
+        
         # Target aircraft line (optional - only show if targets are configured)
-        header_y = 3
+        header_y = 5
         if self.config['target_icao_codes']:
-            target_line = f"Targets: {', '.join(self.config['target_icao_codes'])} (highlighted in green)"
-            stdscr.addstr(2, 0, target_line[:width-1], curses.color_pair(2))
-            header_y = 4
+            target_line = f"🎯 Targets: {', '.join(self.config['target_icao_codes'])} (highlighted in green)"
+            stdscr.addstr(4, 0, target_line[:width-1], curses.color_pair(2))
+            header_y = 6
         
         # Column headers
         header = f"{'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
@@ -211,7 +274,7 @@ class ADSBDashboard:
     def draw_footer(self, stdscr, height: int, width: int):
         """Draw dashboard footer with controls"""
         footer_y = height - 1
-        controls = "Controls: q=quit | s=sort | r=reverse | Space=refresh"
+        controls = f"Controls: q=quit | s=sort({self.sort_by}) | r=reverse | Space=refresh | HackRF: 1090MHz"
         stdscr.addstr(footer_y, 0, controls[:width-1], curses.A_DIM)
     
     def handle_input(self, stdscr):
@@ -255,6 +318,7 @@ class ADSBDashboard:
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)    # Title
         curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)  # Target line
         curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)   # Target aircraft
+        curses.init_pair(4, curses.COLOR_MAGENTA, curses.COLOR_BLACK) # Performance stats
         
         # Start background data updater
         data_thread = threading.Thread(target=self.data_updater, daemon=True)
