@@ -33,6 +33,22 @@ class Aircraft:
         self.first_seen = datetime.now()
         self.messages = data.get('messages', 0)
         
+        # Enhanced pyModeS fields
+        self.enhanced = data.get('enhanced', {})
+        self.true_airspeed = self.enhanced.get('true_airspeed', 'Unknown')
+        self.indicated_airspeed = self.enhanced.get('indicated_airspeed', 'Unknown')
+        self.magnetic_heading = self.enhanced.get('magnetic_heading', 'Unknown')
+        self.vertical_rate = self.enhanced.get('vertical_rate', 'Unknown')
+        self.navigation_accuracy = self.enhanced.get('navigation_accuracy', {})
+        self.surveillance_status = self.enhanced.get('surveillance_status', 'Unknown')
+        self.data_sources = data.get('data_sources', [])
+        
+        # Data quality indicators
+        self.has_position = self.lat != 'Unknown' and self.lon != 'Unknown'
+        self.has_velocity = self.speed != 'Unknown' or self.track != 'Unknown'
+        self.has_altitude = self.altitude != 'Unknown'
+        self.enhanced_data_available = bool(self.enhanced)
+        
     def update(self, data: dict):
         """Update aircraft data"""
         self.flight = data.get('flight', '').strip() or self.flight
@@ -45,6 +61,25 @@ class Aircraft:
         self.category = data.get('category', self.category)
         self.messages = data.get('messages', self.messages)
         self.last_seen = datetime.now()
+        
+        # Update enhanced fields
+        if 'enhanced' in data:
+            self.enhanced.update(data['enhanced'])
+            self.true_airspeed = self.enhanced.get('true_airspeed', self.true_airspeed)
+            self.indicated_airspeed = self.enhanced.get('indicated_airspeed', self.indicated_airspeed)
+            self.magnetic_heading = self.enhanced.get('magnetic_heading', self.magnetic_heading)
+            self.vertical_rate = self.enhanced.get('vertical_rate', self.vertical_rate)
+            self.navigation_accuracy = self.enhanced.get('navigation_accuracy', self.navigation_accuracy)
+            self.surveillance_status = self.enhanced.get('surveillance_status', self.surveillance_status)
+        
+        if 'data_sources' in data:
+            self.data_sources = data['data_sources']
+        
+        # Update data quality indicators
+        self.has_position = self.lat != 'Unknown' and self.lon != 'Unknown'
+        self.has_velocity = self.speed != 'Unknown' or self.track != 'Unknown'
+        self.has_altitude = self.altitude != 'Unknown'
+        self.enhanced_data_available = bool(self.enhanced)
     
     def age_seconds(self) -> int:
         """Get age in seconds since last seen"""
@@ -98,10 +133,51 @@ class ADSBDashboard:
             'strong_signals': 0,
             'weak_signals': 0
         }
+        
+        # pyModeS-specific statistics
+        self.pymodes_stats = {
+            'messages_processed': 0,
+            'messages_decoded': 0,
+            'messages_failed': 0,
+            'decode_rate': 0.0,
+            'error_rate': 0.0,
+            'aircraft_count': 0,
+            'cpr_success_rate': 0.0,
+            'position_calculations': 0,
+            'position_successes': 0,
+            'last_stats_update': None
+        }
+        
+        # Message source statistics
+        self.source_stats = {
+            'sources_total': 0,
+            'sources_connected': 0,
+            'health_status': 'unknown',
+            'total_messages': 0,
+            'duplicate_messages': 0,
+            'messages_per_second': 0.0,
+            'sources': []
+        }
+        
+        # Error tracking and diagnostics
+        self.error_log = []  # Recent errors with timestamps
+        self.max_error_log_size = 50
+        self.connection_history = []  # Connection status changes
+        self.max_connection_history = 20
+        self.alert_status = {
+            'watchlist_alerts_sent': 0,
+            'last_alert_time': None,
+            'alert_errors': 0,
+            'meshtastic_status': 'unknown'
+        }
         self.message_history = []  # Track message rates
         self.signal_strengths = []  # Track signal strengths
-        self.sort_by = 'last_seen'  # Options: last_seen, altitude, speed, flight, hex
+        self.sort_by = 'last_seen'  # Options: last_seen, altitude, speed, flight, hex, true_airspeed, heading, quality
         self.sort_reverse = True
+        self.display_mode = 'standard'  # Options: standard, enhanced, compact
+        self.show_data_quality = True
+        self.filter_enhanced_only = False
+        self.show_detailed_stats = False
         
     def load_config(self, config_path: str) -> dict:
         """Load configuration from JSON file"""
@@ -162,10 +238,13 @@ class ADSBDashboard:
             
             return response == "OK", response
         except ConnectionRefusedError:
+            self.log_error("connection_error", "Connection refused - is receiver running?", "receiver_control")
             return False, "Connection refused - is receiver running?"
         except socket.timeout:
+            self.log_error("connection_error", "Connection timeout", "receiver_control")
             return False, "Connection timeout"
         except Exception as e:
+            self.log_error("connection_error", f"Connection error: {str(e)}", "receiver_control")
             return False, f"Connection error: {str(e)}"
     
     def get_receiver_status(self) -> dict:
@@ -233,8 +312,42 @@ class ADSBDashboard:
             response = requests.get(url, timeout=2)
             response.raise_for_status()
             return response.json()
-        except requests.RequestException:
+        except requests.RequestException as e:
             self.stats['errors'] += 1
+            self.log_error("api_error", f"Failed to fetch aircraft data: {str(e)}", "aircraft_api")
+            return None
+    
+    def fetch_pymodes_stats(self) -> Optional[dict]:
+        """Fetch pyModeS decoder statistics"""
+        try:
+            url = f"http://{self.config['dump1090_host']}:8080/api/stats/pymodes"
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            self.log_error("api_error", f"Failed to fetch pyModeS stats: {str(e)}", "pymodes_api")
+            return None
+    
+    def fetch_source_stats(self) -> Optional[dict]:
+        """Fetch message source statistics"""
+        try:
+            url = f"http://{self.config['dump1090_host']}:8080/api/stats/sources"
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            self.log_error("api_error", f"Failed to fetch source stats: {str(e)}", "source_api")
+            return None
+    
+    def fetch_alert_status(self) -> Optional[dict]:
+        """Fetch alert system status"""
+        try:
+            url = f"http://{self.config['dump1090_host']}:8080/api/stats/alerts"
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            self.log_error("api_error", f"Failed to fetch alert status: {str(e)}", "alert_api")
             return None
     
     def update_aircraft(self, aircraft_data: dict):
@@ -326,9 +439,119 @@ class ADSBDashboard:
         # Update active count
         self.stats['active_aircraft'] = len(self.aircraft)
     
+    def update_pymodes_stats(self, pymodes_data: dict):
+        """Update pyModeS decoder statistics"""
+        self.pymodes_stats.update(pymodes_data)
+        self.pymodes_stats['last_stats_update'] = datetime.now()
+        
+        # Calculate CPR success rate
+        if self.pymodes_stats.get('position_calculations', 0) > 0:
+            self.pymodes_stats['cpr_success_rate'] = (
+                self.pymodes_stats.get('position_successes', 0) / 
+                self.pymodes_stats['position_calculations']
+            )
+    
+    def update_source_stats(self, source_data: dict):
+        """Update message source statistics"""
+        # Track connection status changes
+        old_connected = self.source_stats.get('sources_connected', 0)
+        self.source_stats.update(source_data)
+        new_connected = self.source_stats.get('sources_connected', 0)
+        
+        if old_connected != new_connected:
+            self.log_connection_change(old_connected, new_connected)
+    
+    def log_error(self, error_type: str, message: str, source: str = "system"):
+        """Log an error with timestamp"""
+        error_entry = {
+            'timestamp': datetime.now(),
+            'type': error_type,
+            'message': message,
+            'source': source
+        }
+        
+        self.error_log.append(error_entry)
+        
+        # Keep only recent errors
+        if len(self.error_log) > self.max_error_log_size:
+            self.error_log.pop(0)
+    
+    def log_connection_change(self, old_count: int, new_count: int):
+        """Log connection status changes"""
+        change_entry = {
+            'timestamp': datetime.now(),
+            'old_connected': old_count,
+            'new_connected': new_count,
+            'change_type': 'connected' if new_count > old_count else 'disconnected'
+        }
+        
+        self.connection_history.append(change_entry)
+        
+        # Keep only recent changes
+        if len(self.connection_history) > self.max_connection_history:
+            self.connection_history.pop(0)
+    
+    def get_system_health_status(self) -> dict:
+        """Get comprehensive system health status"""
+        now = datetime.now()
+        
+        # Check for recent errors
+        recent_errors = [e for e in self.error_log if (now - e['timestamp']).total_seconds() < 300]  # Last 5 minutes
+        
+        # Check connection stability
+        recent_disconnections = [c for c in self.connection_history 
+                               if c['change_type'] == 'disconnected' and 
+                               (now - c['timestamp']).total_seconds() < 600]  # Last 10 minutes
+        
+        # Determine overall health
+        health_score = 100
+        health_issues = []
+        
+        if len(recent_errors) > 10:
+            health_score -= 30
+            health_issues.append(f"High error rate: {len(recent_errors)} errors in 5 min")
+        
+        if len(recent_disconnections) > 3:
+            health_score -= 25
+            health_issues.append(f"Connection instability: {len(recent_disconnections)} disconnections")
+        
+        if self.source_stats['sources_connected'] == 0:
+            health_score -= 50
+            health_issues.append("No message sources connected")
+        
+        if self.stats['errors'] > 0 and self.stats['update_count'] > 0:
+            error_rate = self.stats['errors'] / self.stats['update_count']
+            if error_rate > 0.1:  # More than 10% error rate
+                health_score -= 20
+                health_issues.append(f"High system error rate: {error_rate:.1%}")
+        
+        # Determine status
+        if health_score >= 90:
+            status = "excellent"
+        elif health_score >= 70:
+            status = "good"
+        elif health_score >= 50:
+            status = "fair"
+        elif health_score >= 30:
+            status = "poor"
+        else:
+            status = "critical"
+        
+        return {
+            'health_score': health_score,
+            'status': status,
+            'issues': health_issues,
+            'recent_errors': len(recent_errors),
+            'recent_disconnections': len(recent_disconnections)
+        }
+    
     def get_sorted_aircraft(self) -> List[Aircraft]:
         """Get aircraft list sorted by current criteria"""
         aircraft_list = list(self.aircraft.values())
+        
+        # Apply enhanced data filter if enabled
+        if self.filter_enhanced_only:
+            aircraft_list = [a for a in aircraft_list if a.enhanced_data_available]
         
         if self.sort_by == 'last_seen':
             aircraft_list.sort(key=lambda a: a.last_seen, reverse=self.sort_reverse)
@@ -340,6 +563,20 @@ class ADSBDashboard:
             aircraft_list.sort(key=lambda a: a.flight, reverse=self.sort_reverse)
         elif self.sort_by == 'hex':
             aircraft_list.sort(key=lambda a: a.hex, reverse=self.sort_reverse)
+        elif self.sort_by == 'true_airspeed':
+            aircraft_list.sort(key=lambda a: a.true_airspeed if isinstance(a.true_airspeed, (int, float)) else -1, reverse=self.sort_reverse)
+        elif self.sort_by == 'heading':
+            aircraft_list.sort(key=lambda a: a.magnetic_heading if isinstance(a.magnetic_heading, (int, float)) else -1, reverse=self.sort_reverse)
+        elif self.sort_by == 'quality':
+            # Sort by data quality score (position + velocity + altitude + enhanced data)
+            def quality_score(aircraft):
+                score = 0
+                if aircraft.has_position: score += 3
+                if aircraft.has_velocity: score += 2
+                if aircraft.has_altitude: score += 1
+                if aircraft.enhanced_data_available: score += 2
+                return score
+            aircraft_list.sort(key=quality_score, reverse=self.sort_reverse)
         
         return aircraft_list
     
@@ -411,16 +648,33 @@ class ADSBDashboard:
         hackrf_line = f"HackRF: RF={self.hackrf_settings['rf_gain']['value']}dB IF={self.hackrf_settings['if_gain']['value']}dB BB={self.hackrf_settings['bb_gain']['value']}dB | {self.hackrf_settings['sample_rate']['value']/1e6:.1f}MHz @ {self.hackrf_settings['center_freq']['value']/1e6:.1f}MHz"
         stdscr.addstr(1, 0, hackrf_line[:width-1], curses.color_pair(5))
         
-        # Aircraft stats line
-        stats_line = f"Active: {self.stats['active_aircraft']} | Total Seen: {self.stats['total_aircraft']} | With Position: {self.stats['aircraft_with_positions']} | Max Range: {self.stats['max_range_km']:.1f}km"
+        # Aircraft stats line with enhanced data metrics
+        enhanced_count = sum(1 for a in self.aircraft.values() if a.enhanced_data_available)
+        high_quality_count = sum(1 for a in self.aircraft.values() if self._calculate_quality_score(a) >= 3)
+        
+        stats_line = f"Active: {self.stats['active_aircraft']} | Enhanced: {enhanced_count} | High Quality: {high_quality_count} | With Position: {self.stats['aircraft_with_positions']} | Max Range: {self.stats['max_range_km']:.1f}km"
         stdscr.addstr(2, 0, stats_line[:width-1])
         
         # Radio performance line
         perf_line = f"Messages: {self.stats['messages_total']} | Rate: {self.stats['messages_per_second']:.1f}/sec | Avg Signal: {self.stats['avg_signal_strength']:.1f}dBm | Strong: {self.stats['strong_signals']} | Weak: {self.stats['weak_signals']}"
         stdscr.addstr(3, 0, perf_line[:width-1], curses.color_pair(4))
         
-        # System status line
-        status_line = f"Updates: {self.stats['update_count']} | Errors: {self.stats['errors']}"
+        # pyModeS decoder performance line
+        pymodes_line = f"pyModeS: Processed: {self.pymodes_stats['messages_processed']} | Decoded: {self.pymodes_stats['messages_decoded']} | Success: {self.pymodes_stats['decode_rate']:.1%} | CPR Success: {self.pymodes_stats['cpr_success_rate']:.1%}"
+        stdscr.addstr(4, 0, pymodes_line[:width-1], curses.color_pair(1))
+        
+        # Message sources status line
+        sources_line = f"Sources: {self.source_stats['sources_connected']}/{self.source_stats['sources_total']} | Health: {self.source_stats['health_status']} | Duplicates: {self.source_stats['duplicate_messages']} | Source Rate: {self.source_stats['messages_per_second']:.1f}/sec"
+        stdscr.addstr(5, 0, sources_line[:width-1], curses.color_pair(5))
+        
+        # System status line with health indicator
+        health_status = self.get_system_health_status()
+        health_icons = {
+            'excellent': '💚', 'good': '💛', 'fair': '🟠', 'poor': '🔴', 'critical': '💀'
+        }
+        health_icon = health_icons.get(health_status['status'], '❓')
+        
+        status_line = f"Updates: {self.stats['update_count']} | Errors: {self.stats['errors']} | Health: {health_icon}"
         if self.stats['last_update']:
             age = int((datetime.now() - self.stats['last_update']).total_seconds())
             status_line += f" | Last Update: {age}s ago"
@@ -439,18 +693,43 @@ class ADSBDashboard:
         except:
             pass
         
-        stdscr.addstr(4, 0, status_line[:width-1])
+        # Color code the status line based on health
+        status_color = curses.A_NORMAL
+        if health_status['status'] in ['poor', 'critical']:
+            status_color = curses.color_pair(2)  # Red
+        elif health_status['status'] == 'fair':
+            status_color = curses.color_pair(4)  # Yellow
+        
+        stdscr.addstr(6, 0, status_line[:width-1], status_color)
         
         # Target aircraft line (optional - only show if targets are configured)
-        header_y = 6
+        header_y = 8
         if self.config['target_icao_codes']:
             target_line = f"🎯 Targets: {', '.join(self.config['target_icao_codes'])} (highlighted in green)"
-            stdscr.addstr(5, 0, target_line[:width-1], curses.color_pair(2))
-            header_y = 7
+            stdscr.addstr(7, 0, target_line[:width-1], curses.color_pair(2))
+            header_y = 9
         
-        # Column headers
-        header = f"{'🎯':<2} {'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
-        stdscr.addstr(header_y, 0, header[:width-1], curses.A_BOLD)
+        # Column headers based on display mode
+        if self.display_mode == 'enhanced':
+            header = f"{'🎯':<2} {'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'TAS':<6} {'IAS':<6} {'HDG':<4} {'V/R':<5} {'Q':<2} {'AGE':<4}"
+        elif self.display_mode == 'compact':
+            header = f"{'🎯':<2} {'ICAO':<8} {'CALL':<8} {'ALT':<6} {'SPD':<5} {'TRK':<4} {'Q':<2} {'AGE':<4}"
+        else:  # standard
+            header = f"{'🎯':<2} {'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
+        
+        # Add sort indicator
+        sort_indicators = {
+            'last_seen': '⏰', 'altitude': '📏', 'speed': '💨', 'flight': '✈️', 
+            'hex': '🔢', 'true_airspeed': '🚀', 'heading': '🧭', 'quality': '⭐'
+        }
+        sort_indicator = sort_indicators.get(self.sort_by, '📊')
+        direction = '↓' if self.sort_reverse else '↑'
+        
+        header_with_sort = f"{header} | Sort: {sort_indicator}{direction}"
+        if self.filter_enhanced_only:
+            header_with_sort += " | Enhanced Only"
+        
+        stdscr.addstr(header_y, 0, header_with_sort[:width-1], curses.A_BOLD)
         
         return header_y + 1
     
@@ -464,23 +743,94 @@ class ADSBDashboard:
             if y >= height - 1:
                 break
             
-            # Format aircraft data
-            alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
-            spd_str = f"{aircraft.speed}" if isinstance(aircraft.speed, (int, float)) else "---"
-            trk_str = f"{aircraft.track}" if isinstance(aircraft.track, (int, float)) else "---"
-            age_str = f"{aircraft.age_seconds()}s"
-            dur_str = f"{aircraft.duration_seconds()}s"
-            msg_str = f"{aircraft.messages}" if isinstance(aircraft.messages, int) else "---"
-            
             # Add watchlist indicator
             watchlist_indicator = "🎯" if getattr(aircraft, 'is_watchlist', False) else "  "
-            line = f"{watchlist_indicator} {aircraft.hex:<8} {aircraft.flight:<10} {alt_str:<8} {spd_str:<6} {trk_str:<4} {age_str:<5} {dur_str:<5} {msg_str:<6}"
             
-            # Highlight watchlist aircraft in green
-            if getattr(aircraft, 'is_watchlist', False):
-                stdscr.addstr(y, 0, line[:width-1], curses.A_BOLD | curses.color_pair(3))
-            else:
-                stdscr.addstr(y, 0, line[:width-1])
+            # Format line based on display mode
+            if self.display_mode == 'enhanced':
+                line = self._format_enhanced_line(aircraft, watchlist_indicator)
+            elif self.display_mode == 'compact':
+                line = self._format_compact_line(aircraft, watchlist_indicator)
+            else:  # standard
+                line = self._format_standard_line(aircraft, watchlist_indicator)
+            
+            # Choose color based on aircraft properties
+            color_attr = self._get_aircraft_color(aircraft)
+            
+            stdscr.addstr(y, 0, line[:width-1], color_attr)
+    
+    def _format_standard_line(self, aircraft, watchlist_indicator):
+        """Format aircraft line in standard mode"""
+        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        spd_str = f"{aircraft.speed}" if isinstance(aircraft.speed, (int, float)) else "---"
+        trk_str = f"{aircraft.track}" if isinstance(aircraft.track, (int, float)) else "---"
+        age_str = f"{aircraft.age_seconds()}s"
+        dur_str = f"{aircraft.duration_seconds()}s"
+        msg_str = f"{aircraft.messages}" if isinstance(aircraft.messages, int) else "---"
+        
+        return f"{watchlist_indicator} {aircraft.hex:<8} {aircraft.flight:<10} {alt_str:<8} {spd_str:<6} {trk_str:<4} {age_str:<5} {dur_str:<5} {msg_str:<6}"
+    
+    def _format_enhanced_line(self, aircraft, watchlist_indicator):
+        """Format aircraft line in enhanced mode showing pyModeS data"""
+        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        tas_str = f"{aircraft.true_airspeed}" if isinstance(aircraft.true_airspeed, (int, float)) else "---"
+        ias_str = f"{aircraft.indicated_airspeed}" if isinstance(aircraft.indicated_airspeed, (int, float)) else "---"
+        hdg_str = f"{aircraft.magnetic_heading}" if isinstance(aircraft.magnetic_heading, (int, float)) else "---"
+        vr_str = f"{aircraft.vertical_rate}" if isinstance(aircraft.vertical_rate, (int, float)) else "---"
+        age_str = f"{aircraft.age_seconds()}s"
+        
+        # Data quality indicator
+        quality_score = self._calculate_quality_score(aircraft)
+        quality_str = "⭐" * quality_score if quality_score > 0 else "❌"
+        
+        return f"{watchlist_indicator} {aircraft.hex:<8} {aircraft.flight:<10} {alt_str:<8} {tas_str:<6} {ias_str:<6} {hdg_str:<4} {vr_str:<5} {quality_str:<2} {age_str:<4}"
+    
+    def _format_compact_line(self, aircraft, watchlist_indicator):
+        """Format aircraft line in compact mode"""
+        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        spd_str = f"{aircraft.speed}" if isinstance(aircraft.speed, (int, float)) else "---"
+        trk_str = f"{aircraft.track}" if isinstance(aircraft.track, (int, float)) else "---"
+        age_str = f"{aircraft.age_seconds()}s"
+        
+        # Shortened callsign
+        call_str = aircraft.flight[:8] if aircraft.flight != 'Unknown' else aircraft.flight
+        
+        # Data quality indicator
+        quality_score = self._calculate_quality_score(aircraft)
+        quality_str = "⭐" * min(quality_score, 3) if quality_score > 0 else "❌"
+        
+        return f"{watchlist_indicator} {aircraft.hex:<8} {call_str:<8} {alt_str:<6} {spd_str:<5} {trk_str:<4} {quality_str:<2} {age_str:<4}"
+    
+    def _calculate_quality_score(self, aircraft):
+        """Calculate data quality score for aircraft"""
+        score = 0
+        if aircraft.has_position: score += 1
+        if aircraft.has_velocity: score += 1
+        if aircraft.has_altitude: score += 1
+        if aircraft.enhanced_data_available: score += 2
+        return min(score, 5)
+    
+    def _get_aircraft_color(self, aircraft):
+        """Get color attributes for aircraft display"""
+        # Watchlist aircraft in green
+        if getattr(aircraft, 'is_watchlist', False):
+            return curses.A_BOLD | curses.color_pair(3)
+        
+        # Enhanced data aircraft in cyan
+        elif aircraft.enhanced_data_available:
+            return curses.color_pair(1)
+        
+        # High quality data in white/bold
+        elif self._calculate_quality_score(aircraft) >= 3:
+            return curses.A_BOLD
+        
+        # Low quality data dimmed
+        elif self._calculate_quality_score(aircraft) <= 1:
+            return curses.A_DIM
+        
+        # Default
+        else:
+            return curses.A_NORMAL
     
     def read_fft_data(self):
         """Read FFT data for waterfall display"""
@@ -552,6 +902,117 @@ class ADSBDashboard:
         
         return start_y + min(8, len(self.waterfall_data)) + 1
     
+    def draw_detailed_stats(self, stdscr, start_y: int, height: int, width: int):
+        """Draw detailed pyModeS and source statistics"""
+        if not self.show_detailed_stats:
+            return start_y
+        
+        # pyModeS detailed statistics
+        stdscr.addstr(start_y, 0, "📊 pyModeS Decoder Statistics:", curses.A_BOLD | curses.color_pair(1))
+        start_y += 1
+        
+        pymodes_details = [
+            f"  Messages Processed: {self.pymodes_stats['messages_processed']}",
+            f"  Successfully Decoded: {self.pymodes_stats['messages_decoded']} ({self.pymodes_stats['decode_rate']:.1%})",
+            f"  Failed Decodes: {self.pymodes_stats['messages_failed']} ({self.pymodes_stats['error_rate']:.1%})",
+            f"  Aircraft Tracked: {self.pymodes_stats['aircraft_count']}",
+            f"  Position Calculations: {self.pymodes_stats['position_calculations']}",
+            f"  CPR Success Rate: {self.pymodes_stats['cpr_success_rate']:.1%}"
+        ]
+        
+        for i, line in enumerate(pymodes_details):
+            if start_y + i >= height - 3:
+                break
+            stdscr.addstr(start_y + i, 0, line[:width-1])
+        
+        start_y += len(pymodes_details) + 1
+        
+        # Message sources detailed statistics
+        if start_y < height - 5:
+            stdscr.addstr(start_y, 0, "📡 Message Sources:", curses.A_BOLD | curses.color_pair(5))
+            start_y += 1
+            
+            for i, source in enumerate(self.source_stats.get('sources', [])):
+                if start_y >= height - 3:
+                    break
+                
+                status_icon = "✅" if source.get('connected', False) else "❌"
+                source_line = f"  {status_icon} {source.get('name', 'Unknown')}: {source.get('message_count', 0)} msgs, {source.get('error_count', 0)} errors"
+                stdscr.addstr(start_y, 0, source_line[:width-1])
+                start_y += 1
+        
+        return start_y
+    
+    def draw_error_diagnostics(self, stdscr, start_y: int, height: int, width: int):
+        """Draw error and diagnostic information"""
+        if not self.show_detailed_stats:
+            return start_y
+        
+        # System health overview
+        health_status = self.get_system_health_status()
+        
+        # Health status header with color coding
+        health_color = curses.color_pair(3)  # Green for good
+        if health_status['status'] in ['poor', 'critical']:
+            health_color = curses.color_pair(2)  # Red for bad
+        elif health_status['status'] == 'fair':
+            health_color = curses.color_pair(4)  # Yellow for fair
+        
+        health_line = f"🏥 System Health: {health_status['status'].upper()} ({health_status['health_score']}/100)"
+        stdscr.addstr(start_y, 0, health_line[:width-1], curses.A_BOLD | health_color)
+        start_y += 1
+        
+        # Health issues
+        if health_status['issues']:
+            for issue in health_status['issues'][:3]:  # Show max 3 issues
+                if start_y >= height - 3:
+                    break
+                stdscr.addstr(start_y, 0, f"  ⚠️ {issue}"[:width-1], curses.color_pair(2))
+                start_y += 1
+        
+        start_y += 1
+        
+        # Recent errors
+        if self.error_log and start_y < height - 5:
+            stdscr.addstr(start_y, 0, "🚨 Recent Errors:", curses.A_BOLD | curses.color_pair(2))
+            start_y += 1
+            
+            recent_errors = self.error_log[-5:]  # Show last 5 errors
+            for error in recent_errors:
+                if start_y >= height - 3:
+                    break
+                
+                time_str = error['timestamp'].strftime("%H:%M:%S")
+                error_line = f"  {time_str} [{error['source']}] {error['type']}: {error['message']}"
+                stdscr.addstr(start_y, 0, error_line[:width-1], curses.A_DIM)
+                start_y += 1
+        
+        start_y += 1
+        
+        # Alert system status
+        if start_y < height - 4:
+            stdscr.addstr(start_y, 0, "📢 Alert System:", curses.A_BOLD | curses.color_pair(4))
+            start_y += 1
+            
+            alert_lines = [
+                f"  Alerts Sent: {self.alert_status['watchlist_alerts_sent']}",
+                f"  Alert Errors: {self.alert_status['alert_errors']}",
+                f"  Meshtastic: {self.alert_status['meshtastic_status']}"
+            ]
+            
+            if self.alert_status['last_alert_time']:
+                last_alert = datetime.fromisoformat(self.alert_status['last_alert_time']) if isinstance(self.alert_status['last_alert_time'], str) else self.alert_status['last_alert_time']
+                time_since = (datetime.now() - last_alert).total_seconds()
+                alert_lines.append(f"  Last Alert: {int(time_since)}s ago")
+            
+            for line in alert_lines:
+                if start_y >= height - 3:
+                    break
+                stdscr.addstr(start_y, 0, line[:width-1])
+                start_y += 1
+        
+        return start_y
+    
     def draw_footer(self, stdscr, height: int, width: int):
         """Draw dashboard footer with controls"""
         footer_y = height - 1
@@ -559,7 +1020,9 @@ class ADSBDashboard:
             controls = "Menu Mode: ↑↓=navigate | ENTER=select | ESC=exit | Type values and press ENTER"
         else:
             waterfall_status = "ON" if self.show_waterfall else "OFF"
-            controls = f"Controls: q=quit | m=menu | w=waterfall({waterfall_status}) | s=sort({self.sort_by}) | r=reverse | Space=refresh"
+            enhanced_filter = "ON" if self.filter_enhanced_only else "OFF"
+            stats_status = "ON" if self.show_detailed_stats else "OFF"
+            controls = f"Controls: q=quit | m=menu | w=waterfall({waterfall_status}) | t=stats({stats_status}) | s=sort({self.sort_by}) | r=reverse | d=display({self.display_mode}) | e=enhanced({enhanced_filter}) | c=clear_errors | Space=refresh"
         stdscr.addstr(footer_y, 0, controls[:width-1], curses.A_DIM)
     
     def handle_menu_input(self, key):
@@ -642,13 +1105,28 @@ class ADSBDashboard:
                         self.menu_selected = 0
                     elif key == ord('s') or key == ord('S'):
                         # Cycle through sort options
-                        sort_options = ['last_seen', 'altitude', 'speed', 'flight', 'hex']
+                        sort_options = ['last_seen', 'altitude', 'speed', 'flight', 'hex', 'true_airspeed', 'heading', 'quality']
                         current_idx = sort_options.index(self.sort_by)
                         self.sort_by = sort_options[(current_idx + 1) % len(sort_options)]
                     elif key == ord('r') or key == ord('R'):
                         self.sort_reverse = not self.sort_reverse
                     elif key == ord('w') or key == ord('W'):
                         self.show_waterfall = not self.show_waterfall
+                    elif key == ord('d') or key == ord('D'):
+                        # Cycle through display modes
+                        display_modes = ['standard', 'enhanced', 'compact']
+                        current_idx = display_modes.index(self.display_mode)
+                        self.display_mode = display_modes[(current_idx + 1) % len(display_modes)]
+                    elif key == ord('e') or key == ord('E'):
+                        # Toggle enhanced data filter
+                        self.filter_enhanced_only = not self.filter_enhanced_only
+                    elif key == ord('t') or key == ord('T'):
+                        # Toggle detailed statistics display
+                        self.show_detailed_stats = not self.show_detailed_stats
+                    elif key == ord('c') or key == ord('C'):
+                        # Clear error log
+                        self.error_log.clear()
+                        self.connection_history.clear()
                     elif key == ord(' '):
                         # Force refresh
                         pass
@@ -660,10 +1138,32 @@ class ADSBDashboard:
     
     def data_updater(self):
         """Background thread to update aircraft data"""
+        stats_update_counter = 0
         while self.running:
             aircraft_data = self.fetch_aircraft_data()
             if aircraft_data:
                 self.update_aircraft(aircraft_data)
+            
+            # Update pyModeS and source stats every 5 seconds
+            stats_update_counter += 1
+            if stats_update_counter >= 5:
+                try:
+                    pymodes_data = self.fetch_pymodes_stats()
+                    if pymodes_data:
+                        self.update_pymodes_stats(pymodes_data)
+                    
+                    source_data = self.fetch_source_stats()
+                    if source_data:
+                        self.update_source_stats(source_data)
+                    
+                    alert_data = self.fetch_alert_status()
+                    if alert_data:
+                        self.alert_status.update(alert_data)
+                except Exception as e:
+                    self.log_error("stats_update_error", f"Failed to update statistics: {str(e)}", "data_updater")
+                
+                stats_update_counter = 0
+            
             time.sleep(1)  # Update every second
     
     def run_dashboard(self, stdscr):
@@ -692,7 +1192,11 @@ class ADSBDashboard:
                 # Draw dashboard components
                 data_start_y = self.draw_header(stdscr, height, width)
                 if not self.menu_active:
-                    if self.show_waterfall:
+                    if self.show_detailed_stats:
+                        stats_end_y = self.draw_detailed_stats(stdscr, data_start_y, height, width)
+                        error_end_y = self.draw_error_diagnostics(stdscr, stats_end_y, height, width)
+                        self.draw_aircraft_list(stdscr, error_end_y, height, width)
+                    elif self.show_waterfall:
                         waterfall_end_y = self.draw_mini_waterfall(stdscr, data_start_y, height, width)
                         self.draw_aircraft_list(stdscr, waterfall_end_y, height, width)
                     else:
