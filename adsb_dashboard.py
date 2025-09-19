@@ -15,6 +15,8 @@ import signal
 import sys
 import socket
 import struct
+import os
+import numpy as np
 
 class Aircraft:
     def __init__(self, data: dict):
@@ -66,6 +68,12 @@ class ADSBDashboard:
         self.input_buffer = ""
         self.input_prompt = ""
         self.connection_status = "Unknown"
+        
+        # Waterfall display
+        self.show_waterfall = False
+        self.waterfall_data = []
+        self.fft_file = "/tmp/adsb_fft.dat"
+        self.fft_size = 1024
         
         # HackRF settings with safe ranges
         self.hackrf_settings = {
@@ -428,13 +436,84 @@ class ADSBDashboard:
             else:
                 stdscr.addstr(y, 0, line[:width-1])
     
+    def read_fft_data(self):
+        """Read FFT data for waterfall display"""
+        try:
+            if not os.path.exists(self.fft_file):
+                return None
+            
+            file_size = os.path.getsize(self.fft_file)
+            if file_size < self.fft_size * 4:
+                return None
+            
+            with open(self.fft_file, 'rb') as f:
+                f.seek(-self.fft_size * 4, 2)
+                data = np.frombuffer(f.read(self.fft_size * 4), dtype=np.float32)
+                
+                if len(data) == self.fft_size:
+                    # Convert to dB and shift
+                    data = np.maximum(data, 1e-12)
+                    db_data = 10 * np.log10(data)
+                    return np.fft.fftshift(db_data)
+        except:
+            pass
+        return None
+    
+    def draw_mini_waterfall(self, stdscr, start_y: int, height: int, width: int):
+        """Draw a mini waterfall display"""
+        if not self.show_waterfall:
+            return start_y
+        
+        # Read latest FFT data
+        fft_data = self.read_fft_data()
+        if fft_data is not None:
+            self.waterfall_data.append(fft_data)
+            # Keep only last 10 lines
+            if len(self.waterfall_data) > 10:
+                self.waterfall_data.pop(0)
+        
+        if not self.waterfall_data:
+            stdscr.addstr(start_y, 0, "Waterfall: Waiting for FFT data...", curses.A_DIM)
+            return start_y + 1
+        
+        # Draw waterfall title
+        stdscr.addstr(start_y, 0, "Mini Waterfall (1090 MHz ±1 MHz):", curses.A_BOLD)
+        start_y += 1
+        
+        # Focus on ADS-B frequency range
+        center_bin = len(self.waterfall_data[0]) // 2
+        bins_around_center = min(width - 5, 100)  # Show ~100 bins around center
+        start_bin = center_bin - bins_around_center // 2
+        end_bin = center_bin + bins_around_center // 2
+        
+        intensity_chars = " .:-=+*#%@"
+        
+        # Draw recent waterfall lines
+        for i, line_data in enumerate(self.waterfall_data[-8:]):  # Last 8 lines
+            if start_y + i >= height - 2:
+                break
+            
+            line_chars = ""
+            for bin_idx in range(start_bin, min(end_bin, len(line_data))):
+                # Normalize to character range
+                db_val = line_data[bin_idx]
+                normalized = (db_val + 80) / 60  # Assume -80 to -20 dB range
+                normalized = max(0, min(1, normalized))
+                char_idx = int(normalized * (len(intensity_chars) - 1))
+                line_chars += intensity_chars[char_idx]
+            
+            stdscr.addstr(start_y + i, 0, line_chars[:width-1])
+        
+        return start_y + min(8, len(self.waterfall_data)) + 1
+    
     def draw_footer(self, stdscr, height: int, width: int):
         """Draw dashboard footer with controls"""
         footer_y = height - 1
         if self.menu_active:
             controls = "Menu Mode: ↑↓=navigate | ENTER=select | ESC=exit | Type values and press ENTER"
         else:
-            controls = f"Controls: q=quit | m=menu | s=sort({self.sort_by}) | r=reverse | Space=refresh"
+            waterfall_status = "ON" if self.show_waterfall else "OFF"
+            controls = f"Controls: q=quit | m=menu | w=waterfall({waterfall_status}) | s=sort({self.sort_by}) | r=reverse | Space=refresh"
         stdscr.addstr(footer_y, 0, controls[:width-1], curses.A_DIM)
     
     def handle_menu_input(self, key):
@@ -522,6 +601,8 @@ class ADSBDashboard:
                         self.sort_by = sort_options[(current_idx + 1) % len(sort_options)]
                     elif key == ord('r') or key == ord('R'):
                         self.sort_reverse = not self.sort_reverse
+                    elif key == ord('w') or key == ord('W'):
+                        self.show_waterfall = not self.show_waterfall
                     elif key == ord(' '):
                         # Force refresh
                         pass
@@ -565,7 +646,11 @@ class ADSBDashboard:
                 # Draw dashboard components
                 data_start_y = self.draw_header(stdscr, height, width)
                 if not self.menu_active:
-                    self.draw_aircraft_list(stdscr, data_start_y, height, width)
+                    if self.show_waterfall:
+                        waterfall_end_y = self.draw_mini_waterfall(stdscr, data_start_y, height, width)
+                        self.draw_aircraft_list(stdscr, waterfall_end_y, height, width)
+                    else:
+                        self.draw_aircraft_list(stdscr, data_start_y, height, width)
                 self.draw_footer(stdscr, height, width)
                 
                 stdscr.refresh()
