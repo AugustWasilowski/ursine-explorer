@@ -9,7 +9,12 @@ as specified in requirement 5.3.
 import time
 import threading
 import gc
-import psutil
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    psutil = None
 import os
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
@@ -125,7 +130,7 @@ class PerformanceMonitor:
         # Tracking variables
         self._start_time = datetime.now()
         self._last_update = datetime.now()
-        self._process = psutil.Process()
+        self._process = psutil.Process() if PSUTIL_AVAILABLE else None
         
         # Counters for rate calculations
         self._message_count_tracker = deque(maxlen=60)  # Last 60 seconds
@@ -220,35 +225,43 @@ class PerformanceMonitor:
                 pass
             
             # Disk usage
-            disk_usage = psutil.disk_usage('/')
-            self.system_metrics.disk_usage_percent = (disk_usage.used / disk_usage.total) * 100
+            if PSUTIL_AVAILABLE:
+                disk_usage = psutil.disk_usage('/')
+                self.system_metrics.disk_usage_percent = (disk_usage.used / disk_usage.total) * 100
+            else:
+                self.system_metrics.disk_usage_percent = 0.0
             
             # Uptime
             self.system_metrics.uptime_seconds = int((datetime.now() - self._start_time).total_seconds())
             
             # Thread count
-            self.system_metrics.thread_count = self._process.num_threads()
-            
-            # File descriptors (Unix-like systems only)
-            try:
-                self.system_metrics.file_descriptor_count = self._process.num_fds()
-            except (AttributeError, psutil.AccessDenied):
-                # Windows doesn't have num_fds or access denied
-                pass
+            if PSUTIL_AVAILABLE and self._process:
+                self.system_metrics.thread_count = self._process.num_threads()
+                
+                # File descriptors (Unix-like systems only)
+                try:
+                    self.system_metrics.file_descriptor_count = self._process.num_fds()
+                except (AttributeError, psutil.AccessDenied):
+                    # Windows doesn't have num_fds or access denied
+                    pass
+            else:
+                self.system_metrics.thread_count = 0
+                self.system_metrics.file_descriptor_count = 0
             
             # System temperature (if available)
-            try:
-                temps = psutil.sensors_temperatures()
-                if temps:
-                    # Get CPU temperature if available
-                    for name, entries in temps.items():
-                        if 'cpu' in name.lower() or 'core' in name.lower():
-                            if entries:
-                                self.system_metrics.system_temperature_celsius = entries[0].current
-                                break
-            except (AttributeError, OSError):
-                # Temperature sensors not available
-                pass
+            if PSUTIL_AVAILABLE:
+                try:
+                    temps = psutil.sensors_temperatures()
+                    if temps:
+                        # Get CPU temperature if available
+                        for name, entries in temps.items():
+                            if 'cpu' in name.lower() or 'core' in name.lower():
+                                if entries:
+                                    self.system_metrics.system_temperature_celsius = entries[0].current
+                                    break
+                except (AttributeError, OSError):
+                    # Temperature sensors not available
+                    pass
                 
         except Exception as e:
             print(f"Error updating system metrics: {e}")

@@ -16,8 +16,14 @@ from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from pathlib import Path
 import json
-import psutil
 import os
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    psutil = None
 
 
 @dataclass
@@ -243,15 +249,23 @@ class ADSBLogger:
     def _update_performance_metrics(self) -> None:
         """Update system performance metrics."""
         try:
-            process = psutil.Process()
+            if PSUTIL_AVAILABLE:
+                process = psutil.Process()
+                
+                with self._stats_lock:
+                    self.performance_metrics.cpu_usage_percent = process.cpu_percent()
+                    
+                    memory_info = process.memory_info()
+                    self.performance_metrics.memory_usage_mb = memory_info.rss / 1024 / 1024
+                    self.performance_metrics.memory_usage_percent = process.memory_percent()
+            else:
+                # Fallback when psutil is not available
+                with self._stats_lock:
+                    self.performance_metrics.cpu_usage_percent = 0.0
+                    self.performance_metrics.memory_usage_mb = 0.0
+                    self.performance_metrics.memory_usage_percent = 0.0
             
             with self._stats_lock:
-                self.performance_metrics.cpu_usage_percent = process.cpu_percent()
-                
-                memory_info = process.memory_info()
-                self.performance_metrics.memory_usage_mb = memory_info.rss / 1024 / 1024
-                self.performance_metrics.memory_usage_percent = process.memory_percent()
-                
                 self.performance_metrics.timestamp = datetime.now()
                 
                 # Add to history
