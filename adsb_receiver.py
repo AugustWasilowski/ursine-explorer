@@ -109,7 +109,7 @@ class MeshtasticAlert:
             logger.info(f"Connected to Meshtastic on {self.port}")
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to connect to Meshtastic: {e}")
+            logger.error(f"Failed to connect to Meshtastic: {e}")
             return False
     
     def disconnect(self):
@@ -117,9 +117,9 @@ class MeshtasticAlert:
         if self.serial_conn:
             try:
                 self.serial_conn.close()
-                logger.info("🔌 Disconnected from Meshtastic")
+                logger.info("Disconnected from Meshtastic")
             except Exception as e:
-                logger.error(f"⚠️ Error disconnecting from Meshtastic: {e}")
+                logger.error(f"Error disconnecting from Meshtastic: {e}")
             finally:
                 self.serial_conn = None
     
@@ -151,11 +151,11 @@ class MeshtasticAlert:
             if log_alerts:
                 self.log_alert(msg, log_file)
             
-            logger.info(f"📡 Sent Meshtastic alert: {msg}")
+            logger.info(f"Sent Meshtastic alert: {msg}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to send Meshtastic alert: {e}")
+            logger.error(f"Failed to send Meshtastic alert: {e}")
             return False
     
     def log_alert(self, message: str, log_file: str):
@@ -165,7 +165,7 @@ class MeshtasticAlert:
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 f.write(f"{timestamp} - {message}\n")
         except Exception as e:
-            logger.error(f"❌ Failed to log alert: {e}")
+            logger.error(f"Failed to log alert: {e}")
 
 class Dump1090Manager:
     """Manages dump1090 process lifecycle"""
@@ -354,7 +354,7 @@ class ControlHandler(socketserver.BaseRequestHandler):
             self.request.sendall(response.encode())
             
         except Exception as e:
-            logger.error(f"❌ Control command error: {e}")
+            logger.error(f"Control command error: {e}")
             self.request.sendall(b"ERROR")
 
 class ADSBServer:
@@ -417,16 +417,16 @@ class ADSBServer:
                 config.setdefault('poll_interval_sec', 1)
                 return config
         except FileNotFoundError:
-            logger.error(f"❌ Config file not found: {config_path}")
+            logger.error(f"Config file not found: {config_path}")
             return {}
         except Exception as e:
-            logger.error(f"❌ Error loading config: {e}")
+            logger.error(f"Error loading config: {e}")
             return {}
     
     def update_watchlist(self):
         """Update watchlist from config"""
         self.watchlist = set(code.upper() for code in self.config.get('target_icao_codes', []))
-        logger.info(f"🎯 Watchlist updated: {list(self.watchlist)}")
+        logger.info(f"Watchlist updated: {list(self.watchlist)}")
     
     def start_dump1090(self) -> bool:
         """Start dump1090 process"""
@@ -438,7 +438,7 @@ class ADSBServer:
     
     def restart_dump1090(self) -> bool:
         """Restart dump1090 process"""
-        logger.info("🔄 Restarting dump1090...")
+        logger.info("Restarting dump1090...")
         self.stop_dump1090()
         time.sleep(2)
         success = self.start_dump1090()
@@ -477,7 +477,7 @@ class ADSBServer:
             
         except Exception as e:
             self.stats['errors'] += 1
-            logger.warning(f"⚠️ Failed to fetch aircraft data: {e}")
+            logger.warning(f"Failed to fetch aircraft data: {e}")
             return None
     
     def update_aircraft(self, aircraft_data: dict):
@@ -515,7 +515,7 @@ class ADSBServer:
             squawk = ac_data.get('squawk', 'Unknown')
             
             # Format the log message
-            log_msg = f"✈️  {hex_code} ({flight})"
+            log_msg = f"AIRCRAFT: {hex_code} ({flight})"
             if altitude != 'Unknown':
                 log_msg += f" @ {altitude}ft"
             if speed != 'Unknown':
@@ -527,7 +527,7 @@ class ADSBServer:
             if squawk != 'Unknown':
                 log_msg += f" squawk:{squawk}"
             if is_watchlist:
-                log_msg += " 🎯 WATCHLIST"
+                log_msg += " [WATCHLIST]"
             
             logger.info(log_msg)
             
@@ -539,7 +539,7 @@ class ADSBServer:
                 new_aircraft.is_watchlist = is_watchlist
                 self.aircraft[hex_code] = new_aircraft
                 self.stats['total_aircraft'] += 1
-                logger.info(f"🆕 New aircraft: {hex_code} ({flight})")
+                logger.info(f"NEW AIRCRAFT: {hex_code} ({flight})")
                 
                 # Send initial alert for new watchlist aircraft
                 if is_watchlist and self.meshtastic:
@@ -554,7 +554,7 @@ class ADSBServer:
         
         for hex_code in to_remove:
             aircraft = self.aircraft[hex_code]
-            logger.info(f"⏰ Aircraft timeout: {hex_code} ({aircraft.flight})")
+            logger.info(f"AIRCRAFT TIMEOUT: {hex_code} ({aircraft.flight})")
             del self.aircraft[hex_code]
         
         # Update active count
@@ -653,7 +653,7 @@ class ADSBServer:
             try:
                 # Check if dump1090 needs restart
                 if self.dump1090_manager and self.dump1090_manager.needs_restart():
-                    logger.warning("⚠️ Watchdog timeout - restarting dump1090")
+                    logger.warning("Watchdog timeout - restarting dump1090")
                     self.restart_dump1090()
                 
                 # Fetch and update aircraft data
@@ -671,7 +671,7 @@ class ADSBServer:
                 
                 time.sleep(self.config.get('poll_interval_sec', 1))
                 
-            except Exception as e:
+        except Exception as e:
                         logger.error(f"Data updater error: {e}")
                         time.sleep(5)
     
@@ -682,10 +682,10 @@ class ADSBServer:
             http_port = 8080
             self.httpd = HTTPServer(('localhost', http_port), ADSBHTTPHandler)
             self.httpd.adsb_server = self
-            logger.info(f"✅ HTTP server started on port {http_port}")
+            logger.info(f"HTTP server started on port {http_port}")
             self.httpd.serve_forever()
         except Exception as e:
-            logger.error(f"❌ Failed to start HTTP server: {e}")
+            logger.error(f"Failed to start HTTP server: {e}")
     
     def start_control_server(self):
         """Start control server for dashboard commands"""
@@ -695,18 +695,18 @@ class ADSBServer:
                 ControlHandler
             )
             self.control_server.adsb_server = self
-            logger.info(f"✅ Control server started on port {self.config['receiver_control_port']}")
+            logger.info(f"Control server started on port {self.config['receiver_control_port']}")
             self.control_server.serve_forever()
         except Exception as e:
-            logger.error(f"❌ Failed to start control server: {e}")
+            logger.error(f"Failed to start control server: {e}")
     
     def start(self):
         """Start the ADS-B server"""
-        logger.info("🛩️ Starting Ursine Explorer ADS-B Server")
+        logger.info("Starting Ursine Explorer ADS-B Server")
         
         # Start dump1090
         if not self.start_dump1090():
-            logger.error("❌ Failed to start dump1090")
+            logger.error("Failed to start dump1090")
             return False
         
         # Connect to Meshtastic
@@ -726,12 +726,12 @@ class ADSBServer:
         data_thread = threading.Thread(target=self.data_updater, daemon=True)
         data_thread.start()
         
-        logger.info("✅ ADS-B server started successfully")
+        logger.info("ADS-B server started successfully")
         return True
     
     def stop(self):
         """Stop the ADS-B server"""
-        logger.info("🛑 Shutting down ADS-B server...")
+        logger.info("Shutting down ADS-B server...")
         
         self.running = False
         
@@ -747,7 +747,7 @@ class ADSBServer:
                 self.httpd.shutdown()
                 self.httpd.server_close()
             except Exception as e:
-                logger.error(f"⚠️ HTTP server stop error: {e}")
+                logger.error(f"HTTP server stop error: {e}")
         
         # Stop control server
         if self.control_server:
@@ -755,21 +755,21 @@ class ADSBServer:
                 self.control_server.shutdown()
                 self.control_server.server_close()
             except Exception as e:
-                logger.error(f"⚠️ Control server stop error: {e}")
+                logger.error(f"Control server stop error: {e}")
         
-        logger.info("✅ Shutdown complete")
+        logger.info("Shutdown complete")
 
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
-    logger.info('\n🛑 Received interrupt signal')
+    logger.info('\nReceived interrupt signal')
     if hasattr(signal_handler, 'server'):
         try:
             signal_handler.server.stop()
         except Exception as e:
-            logger.error(f"⚠️ Error during shutdown: {e}")
+            logger.error(f"Error during shutdown: {e}")
     
     # Force exit if needed
-    logger.info("🔄 Forcing exit...")
+    logger.info("Forcing exit...")
     os._exit(0)
 
 def main():
@@ -786,7 +786,7 @@ def main():
     
     # Start server
     if not server.start():
-        logger.error("❌ Failed to start server")
+        logger.error("Failed to start server")
         sys.exit(1)
     
     print("\nADS-B receiver running... Press Ctrl+C to stop")
@@ -799,13 +799,13 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("\n🛑 Keyboard interrupt received")
+        logger.info("\nKeyboard interrupt received")
         server.stop()
     except Exception as e:
-        logger.error(f"\n❌ Unexpected error: {e}")
+        logger.error(f"\nUnexpected error: {e}")
         server.stop()
     finally:
-        logger.info("🔄 Exiting main thread...")
+        logger.info("Exiting main thread...")
         sys.exit(0)
 
 if __name__ == "__main__":
