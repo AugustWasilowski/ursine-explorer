@@ -10,6 +10,8 @@ from .config import PyModeSConfig
 from .decoder import PyModeSDecode
 from .message_source import MessageSourceManager, MessageSource, Dump1090Source, NetworkSource, DummyMessageSource
 from .aircraft import EnhancedAircraft
+from .validator import MessageValidator, ValidationConfig, MessageType as ValidatorMessageType
+from .decoded_message import DecodedMessage, MessageBatch, PositionData, VelocityData, IdentificationData, MessageMetadata, MessageType, DataQuality
 
 __version__ = "1.0.0"
 __all__ = [
@@ -20,5 +22,16 @@ __all__ = [
     "Dump1090Source",
     "NetworkSource", 
     "DummyMessageSource",
-    "EnhancedAircraft"
+    "EnhancedAircraft",
+    "MessageValidator",
+    "ValidationConfig",
+    "ValidatorMessageType",
+    "DecodedMessage",
+    "MessageBatch",
+    "PositionData",
+    "VelocityData", 
+    "IdentificationData",
+    "MessageMetadata",
+    "MessageType",
+    "DataQuality"
 ]
