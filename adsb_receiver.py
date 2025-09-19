@@ -657,7 +657,7 @@ def signal_handler(sig, frame):
 
 def main():
     """Main entry point"""
-    print("🛩️ Ursine Explorer ADS-B Receiver with dump1090 Integration")
+    print("Ursine Explorer ADS-B Receiver with dump1090 Integration")
     print("=" * 60)
     
     server = ADSBServer()
@@ -672,10 +672,10 @@ def main():
         logger.error("❌ Failed to start server")
         sys.exit(1)
     
-    print("\n📡 ADS-B receiver running... Press Ctrl+C to stop")
-    print(f"🔍 Aircraft data: http://localhost:{server.config['dump1090_port']}/data/aircraft.json")
-    print(f"⚙️ Control port: {server.config['receiver_control_port']}")
-    print(f"🎯 Watchlist: {list(server.watchlist)}")
+    print("\nADS-B receiver running... Press Ctrl+C to stop")
+    print(f"Aircraft data: http://localhost:{server.config['dump1090_port']}/data/aircraft.json")
+    print(f"Control port: {server.config['receiver_control_port']}")
+    print(f"Watchlist: {list(server.watchlist)}")
     
     try:
         # Keep the main thread alive

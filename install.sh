@@ -29,7 +29,20 @@ echo "Building dump1090..."
 if make; then
     echo "Installing dump1090..."
     sudo make install
-    echo "✅ dump1090 installed successfully"
+    
+    # Verify installation
+    if command -v dump1090-fa >/dev/null 2>&1; then
+        echo "✅ dump1090-fa installed successfully at $(which dump1090-fa)"
+    else
+        echo "⚠️ dump1090-fa not found in PATH, checking /usr/local/bin..."
+        if [ -f "/usr/local/bin/dump1090-fa" ]; then
+            echo "✅ dump1090-fa found at /usr/local/bin/dump1090-fa"
+            echo "Note: You may need to add /usr/local/bin to your PATH"
+        else
+            echo "❌ dump1090-fa installation verification failed"
+            exit 1
+        fi
+    fi
 else
     echo "❌ dump1090 build failed"
     exit 1
