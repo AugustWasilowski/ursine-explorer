@@ -204,7 +204,9 @@ class Dump1090Manager:
                     '--freq', str(self.config.get('frequency', 1090000000)),
                     '--net',
                     '--net-ro-port', str(self.config.get('dump1090_port', 30005)),
-                    '--net-sbs-port', '30003'
+                    '--net-sbs-port', '30003',
+                    '--write-json', '/tmp/dump1090',
+                    '--write-json-every', '1'
                 ]
                 
                 # Add gain settings
@@ -456,18 +458,21 @@ class ADSBServer:
             self.meshtastic.disconnect()
     
     def fetch_aircraft_data(self) -> Optional[dict]:
-        """Fetch aircraft data from dump1090 via Beast TCP"""
+        """Fetch aircraft data from dump1090 JSON files"""
         try:
-            # For now, return mock data since Beast TCP parsing is complex
-            # In a full implementation, you'd parse the Beast protocol here
-            # This allows the system to run and be tested
+            # Read aircraft data from JSON file
+            aircraft_file = '/tmp/dump1090/aircraft.json'
+            if os.path.exists(aircraft_file):
+                with open(aircraft_file, 'r') as f:
+                    aircraft_data = json.load(f)
+                
+                # Update dump1090 data time for watchdog
+                if self.dump1090_manager:
+                    self.dump1090_manager.update_data_time()
+                
+                logger.info(f"Read aircraft data: {len(aircraft_data.get('aircraft', []))} aircraft, {aircraft_data.get('messages', 0)} messages")
+                return aircraft_data
             
-            # Update dump1090 data time for watchdog
-            if self.dump1090_manager:
-                self.dump1090_manager.update_data_time()
-            
-            # Return empty aircraft data for now
-            # TODO: Implement proper Beast TCP parsing
             return {"aircraft": [], "messages": 0}
             
         except Exception as e:
@@ -637,7 +642,7 @@ class ADSBServer:
                 
                 time.sleep(self.config.get('poll_interval_sec', 1))
                 
-            except Exception as e:
+        except Exception as e:
                     logger.error(f"Data updater error: {e}")
                     time.sleep(5)
     
