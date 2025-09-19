@@ -580,9 +580,9 @@ class ADSBServer:
                 
                 time.sleep(self.config.get('poll_interval_sec', 1))
                 
-        except Exception as e:
-            logger.error(f"Data updater error: {e}")
-            time.sleep(5)
+            except Exception as e:
+                logger.error(f"Data updater error: {e}")
+                time.sleep(5)
     
     def start_http_server(self):
         """Start HTTP server for aircraft data"""
