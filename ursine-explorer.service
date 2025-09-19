@@ -1,7 +1,6 @@
 [Unit]
 Description=Ursine Explorer - ADS-B Aircraft Monitor
-After=network.target dump1090-mutability.service
-Wants=dump1090-mutability.service
+After=network.target
 
 [Service]
 Type=simple

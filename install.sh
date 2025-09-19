@@ -96,6 +96,31 @@ sudo chmod +x /opt/ursine-explorer/adsb_dashboard.py
 sudo chmod +x /opt/ursine-explorer/start_ursine.sh
 sudo chown -R ursine:ursine /opt/ursine-explorer
 
+# Check for existing services that might conflict
+echo "Checking for existing ADS-B services..."
+if systemctl is-active --quiet dump1090-mutability; then
+    echo "⚠️  dump1090-mutability service is running and will conflict with Ursine Explorer"
+    echo "Stopping dump1090-mutability service..."
+    sudo systemctl stop dump1090-mutability
+    sudo systemctl disable dump1090-mutability
+    echo "✅ dump1090-mutability service stopped and disabled"
+fi
+
+if systemctl is-active --quiet dump1090; then
+    echo "⚠️  dump1090 service is running and will conflict with Ursine Explorer"
+    echo "Stopping dump1090 service..."
+    sudo systemctl stop dump1090
+    sudo systemctl disable dump1090
+    echo "✅ dump1090 service stopped and disabled"
+fi
+
+# Check for existing Ursine Explorer service
+if systemctl is-active --quiet ursine-explorer; then
+    echo "⚠️  Ursine Explorer service is already running"
+    echo "Stopping existing Ursine Explorer service..."
+    sudo systemctl stop ursine-explorer
+fi
+
 # Install systemd service
 echo "Installing systemd service..."
 sudo cp ursine-explorer.service /etc/systemd/system/
@@ -108,14 +133,52 @@ echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6089", GROUP
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 
+# Post-installation verification
+echo "Running post-installation verification..."
+
+# Check if dump1090 binary exists and works
+if [ -f "/usr/local/bin/dump1090" ]; then
+    echo "✅ dump1090 binary found at /usr/local/bin/dump1090"
+    # Test if it can start (without actually running)
+    timeout 2 /usr/local/bin/dump1090 --help >/dev/null 2>&1 && echo "✅ dump1090 binary is functional" || echo "⚠️ dump1090 binary may have issues"
+else
+    echo "❌ dump1090 binary not found at /usr/local/bin/dump1090"
+fi
+
+# Check HackRF device
+if lsusb | grep -q "1d50:6089"; then
+    echo "✅ HackRF device detected"
+else
+    echo "⚠️ HackRF device not detected - make sure it's connected"
+fi
+
+# Check if ports are free
+if netstat -tulpn 2>/dev/null | grep -q ":30005 "; then
+    echo "⚠️ Port 30005 is in use - this may cause conflicts"
+    echo "   Run: sudo ./kill_port.sh 30005"
+else
+    echo "✅ Port 30005 is available"
+fi
+
+if netstat -tulpn 2>/dev/null | grep -q ":8080 "; then
+    echo "⚠️ Port 8080 is in use - this may cause conflicts"
+    echo "   Run: sudo ./kill_port.sh 8080"
+else
+    echo "✅ Port 8080 is available"
+fi
+
+# Check Python dependencies
+python3 -c "import requests, serial, numpy" 2>/dev/null && echo "✅ Python dependencies are available" || echo "⚠️ Some Python dependencies may be missing"
+
+echo ""
 echo "✅ Installation complete!"
 echo ""
 echo "Next steps:"
 echo "1. Edit /opt/ursine-explorer/config.json with your target ICAO codes and Meshtastic settings"
-echo "2. Test dump1090: dump1090-fa --device-type hackrf --freq 1090e6 --net"
-echo "3. Test the ADS-B receiver: sudo -u ursine python3 /opt/ursine-explorer/adsb_receiver.py"
-echo "4. Test the dashboard: sudo -u ursine python3 /opt/ursine-explorer/adsb_dashboard.py"
-echo "5. Test the monitor: sudo -u ursine python3 /opt/ursine-explorer/monitor.py"
-echo "6. Enable the service: sudo systemctl enable ursine-explorer"
-echo "7. Start the service: sudo systemctl start ursine-explorer"
-echo "8. Check status: sudo systemctl status ursine-explorer"
+echo "2. Test the system: sudo -u ursine python3 /opt/ursine-explorer/adsb_receiver.py"
+echo "3. Enable the service: sudo systemctl enable ursine-explorer"
+echo "4. Start the service: sudo systemctl start ursine-explorer"
+echo "5. Check status: sudo systemctl status ursine-explorer"
+echo "6. View logs: sudo journalctl -u ursine-explorer -f"
+echo ""
+echo "If you encounter port conflicts, run: sudo ./kill_port.sh [PORT]"

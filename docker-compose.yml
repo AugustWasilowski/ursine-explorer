@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  ursine-explorer:
+    build: .
+    container_name: ursine-explorer
+    privileged: true  # Required for HackRF USB access
+    devices:
+      - /dev/bus/usb:/dev/bus/usb  # USB device access
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./alerts.log:/app/alerts.log
+      - /tmp/adsb_json:/tmp/adsb_json
+    ports:
+      - "8080:8080"  # HTTP API
+      - "8081:8081"  # Control port
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - ursine-network
+
+networks:
+  ursine-network:
+    driver: bridge
