@@ -505,6 +505,32 @@ class ADSBServer:
             # Check if aircraft is on watchlist
             is_watchlist = hex_code in self.watchlist
             
+            # Log aircraft details
+            flight = ac_data.get('flight', '').strip() or 'Unknown'
+            altitude = ac_data.get('alt_baro', 'Unknown')
+            speed = ac_data.get('gs', 'Unknown')
+            track = ac_data.get('track', 'Unknown')
+            lat = ac_data.get('lat', 'Unknown')
+            lon = ac_data.get('lon', 'Unknown')
+            squawk = ac_data.get('squawk', 'Unknown')
+            
+            # Format the log message
+            log_msg = f"✈️  {hex_code} ({flight})"
+            if altitude != 'Unknown':
+                log_msg += f" @ {altitude}ft"
+            if speed != 'Unknown':
+                log_msg += f" {speed}kts"
+            if track != 'Unknown':
+                log_msg += f" {track}°"
+            if lat != 'Unknown' and lon != 'Unknown':
+                log_msg += f" [{lat:.4f},{lon:.4f}]"
+            if squawk != 'Unknown':
+                log_msg += f" squawk:{squawk}"
+            if is_watchlist:
+                log_msg += " 🎯 WATCHLIST"
+            
+            logger.info(log_msg)
+            
             if hex_code in self.aircraft:
                 self.aircraft[hex_code].update(ac_data)
                 self.aircraft[hex_code].is_watchlist = is_watchlist
@@ -513,6 +539,7 @@ class ADSBServer:
                 new_aircraft.is_watchlist = is_watchlist
                 self.aircraft[hex_code] = new_aircraft
                 self.stats['total_aircraft'] += 1
+                logger.info(f"🆕 New aircraft: {hex_code} ({flight})")
                 
                 # Send initial alert for new watchlist aircraft
                 if is_watchlist and self.meshtastic:
@@ -526,6 +553,8 @@ class ADSBServer:
         ]
         
         for hex_code in to_remove:
+            aircraft = self.aircraft[hex_code]
+            logger.info(f"⏰ Aircraft timeout: {hex_code} ({aircraft.flight})")
             del self.aircraft[hex_code]
         
         # Update active count
