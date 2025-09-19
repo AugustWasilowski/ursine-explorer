@@ -184,10 +184,9 @@ class Dump1090Manager:
             
             # Check if it's dump1090-mutability (different command line options)
             if 'mutability' in dump1090_path:
-                # dump1090-mutability uses simpler options
+                # dump1090-mutability uses different options - try without device specification
                 cmd = [
                     dump1090_path,
-                    '--device', 'hackrf',
                     '--freq', str(self.config.get('frequency', 1090000000)),
                     '--net',
                     '--net-ro-port', '30005',
