@@ -52,12 +52,16 @@ class ADSBReceiver(gr.top_block):
             
             # FFT for waterfall display
             self.fft_size = 1024
-            self.fft = fft.fft_vcc(self.fft_size, True, (), True)
-            self.complex_to_mag_squared = blocks.complex_to_mag_squared(self.fft_size)
-            self.vector_to_stream = blocks.vector_to_stream(gr.sizeof_float*1, self.fft_size)
             
             # Decimation to reduce data rate for waterfall
             self.decimator = filter.fir_filter_ccf(4, [1])  # Decimate by 4
+            
+            # Stream to vector converter for FFT
+            self.stream_to_vector = blocks.stream_to_vector(gr.sizeof_gr_complex*1, self.fft_size)
+            
+            self.fft = fft.fft_vcc(self.fft_size, True, (), True)
+            self.complex_to_mag_squared = blocks.complex_to_mag_squared(self.fft_size)
+            self.vector_to_stream = blocks.vector_to_stream(gr.sizeof_float*1, self.fft_size)
             
             # File sink for FFT data (for waterfall)
             self.fft_file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/adsb_fft.dat", False)
@@ -76,7 +80,8 @@ class ADSBReceiver(gr.top_block):
             
             # Connect FFT chain for waterfall
             self.connect((self.osmosdr_source, 0), (self.decimator, 0))
-            self.connect((self.decimator, 0), (self.fft, 0))
+            self.connect((self.decimator, 0), (self.stream_to_vector, 0))
+            self.connect((self.stream_to_vector, 0), (self.fft, 0))
             self.connect((self.fft, 0), (self.complex_to_mag_squared, 0))
             self.connect((self.complex_to_mag_squared, 0), (self.vector_to_stream, 0))
             self.connect((self.vector_to_stream, 0), (self.fft_file_sink, 0))

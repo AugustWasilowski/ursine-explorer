@@ -39,6 +39,9 @@ class SpectrumTest(gr.top_block):
         self.osmosdr_source.set_if_gain(32, 0)   # IF gain
         self.osmosdr_source.set_bb_gain(32, 0)   # BB gain
         
+        # Stream to vector converter for FFT
+        self.stream_to_vector = blocks.stream_to_vector(gr.sizeof_gr_complex*1, self.fft_size)
+        
         # FFT and file sink
         self.fft = fft.fft_vcc(self.fft_size, True, (), True)
         self.complex_to_mag_squared = blocks.complex_to_mag_squared(self.fft_size)
@@ -46,7 +49,8 @@ class SpectrumTest(gr.top_block):
         self.file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/hackrf_test_spectrum.dat", False)
         
         # Connect blocks
-        self.connect((self.osmosdr_source, 0), (self.fft, 0))
+        self.connect((self.osmosdr_source, 0), (self.stream_to_vector, 0))
+        self.connect((self.stream_to_vector, 0), (self.fft, 0))
         self.connect((self.fft, 0), (self.complex_to_mag_squared, 0))
         self.connect((self.complex_to_mag_squared, 0), (self.vector_to_stream, 0))
         self.connect((self.vector_to_stream, 0), (self.file_sink, 0))
