@@ -113,6 +113,16 @@ class ADSBDashboard:
                 config.setdefault('dump1090_port', 8080)
                 config.setdefault('receiver_control_port', 8081)
                 config.setdefault('target_icao_codes', [])
+                config.setdefault('frequency', 1090000000)
+                config.setdefault('lna_gain', 40)
+                config.setdefault('vga_gain', 20)
+                config.setdefault('enable_hackrf_amp', True)
+                config.setdefault('log_alerts', True)
+                config.setdefault('alert_log_file', 'alerts.log')
+                config.setdefault('alert_interval_sec', 300)
+                config.setdefault('dump1090_path', '/usr/bin/dump1090-fa')
+                config.setdefault('watchdog_timeout_sec', 60)
+                config.setdefault('poll_interval_sec', 1)
                 return config
         except FileNotFoundError:
             # Return default config if file not found
@@ -120,7 +130,17 @@ class ADSBDashboard:
                 'dump1090_host': 'localhost',
                 'dump1090_port': 8080,
                 'receiver_control_port': 8081,
-                'target_icao_codes': []
+                'target_icao_codes': [],
+                'frequency': 1090000000,
+                'lna_gain': 40,
+                'vga_gain': 20,
+                'enable_hackrf_amp': True,
+                'log_alerts': True,
+                'alert_log_file': 'alerts.log',
+                'alert_interval_sec': 300,
+                'dump1090_path': '/usr/bin/dump1090-fa',
+                'watchdog_timeout_sec': 60,
+                'poll_interval_sec': 1
             }
     
     def send_receiver_command(self, command: str, value: float = None) -> tuple[bool, str]:
@@ -147,6 +167,21 @@ class ADSBDashboard:
             return False, "Connection timeout"
         except Exception as e:
             return False, f"Connection error: {str(e)}"
+    
+    def get_receiver_status(self) -> dict:
+        """Get receiver status information"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((self.config['dump1090_host'], self.config['receiver_control_port']))
+            
+            sock.send(b"GET_STATUS\n")
+            response = sock.recv(4096).decode().strip()
+            sock.close()
+            
+            return json.loads(response)
+        except Exception as e:
+            return {"error": str(e)}
     
     def validate_setting(self, setting_name: str, value: str) -> tuple[bool, float, str]:
         """Validate a setting value and return (valid, parsed_value, error_message)"""
@@ -175,23 +210,19 @@ class ADSBDashboard:
         return success, message
     
     def apply_setting(self, setting_name: str, value: float) -> tuple[bool, str]:
-        """Apply a setting to the HackRF"""
-        command_map = {
-            'rf_gain': 'SET_RF_GAIN',
-            'if_gain': 'SET_IF_GAIN', 
-            'bb_gain': 'SET_BB_GAIN',
-            'sample_rate': 'SET_SAMPLE_RATE',
-            'center_freq': 'SET_CENTER_FREQ'
-        }
+        """Apply a setting to the HackRF via dump1090 restart"""
+        # For the new system, we need to restart dump1090 with new settings
+        # This is a simplified approach - in practice, you might want to
+        # implement dynamic parameter changes
         
-        command = command_map.get(setting_name)
-        if not command:
-            return False, "Unknown command"
-        
-        success, message = self.send_receiver_command(command, value)
-        if success:
+        # Update local settings
+        if setting_name in self.hackrf_settings:
             self.hackrf_settings[setting_name]['value'] = value
-            return True, "Applied successfully"
+            
+        # Send restart command to receiver
+        success, message = self.send_receiver_command('RESTART_DUMP1090')
+        if success:
+            return True, "Settings updated - dump1090 restarted"
         return False, message
     
     def fetch_aircraft_data(self) -> Optional[dict]:
@@ -272,6 +303,10 @@ class ADSBDashboard:
             else:
                 self.aircraft[hex_code] = Aircraft(ac_data)
                 self.stats['total_aircraft'] += 1
+            
+            # Set watchlist flag from receiver data
+            if 'is_watchlist' in ac_data:
+                self.aircraft[hex_code].is_watchlist = ac_data['is_watchlist']
         
         # Update average signal strength
         if signal_strengths:
@@ -393,6 +428,16 @@ class ADSBDashboard:
         else:
             status_line += " | Waiting for data... 🔄"
         
+        # Add receiver status if available
+        try:
+            receiver_status = self.get_receiver_status()
+            if 'dump1090_running' in receiver_status:
+                status_line += f" | dump1090: {'✅' if receiver_status['dump1090_running'] else '❌'}"
+            if 'meshtastic_connected' in receiver_status:
+                status_line += f" | Meshtastic: {'✅' if receiver_status['meshtastic_connected'] else '❌'}"
+        except:
+            pass
+        
         stdscr.addstr(4, 0, status_line[:width-1])
         
         # Target aircraft line (optional - only show if targets are configured)
@@ -403,7 +448,7 @@ class ADSBDashboard:
             header_y = 7
         
         # Column headers
-        header = f"{'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
+        header = f"{'🎯':<2} {'ICAO':<8} {'CALLSIGN':<10} {'ALT':<8} {'SPD':<6} {'TRK':<4} {'AGE':<5} {'DUR':<5} {'MSGS':<6}"
         stdscr.addstr(header_y, 0, header[:width-1], curses.A_BOLD)
         
         return header_y + 1
@@ -412,8 +457,6 @@ class ADSBDashboard:
         """Draw the aircraft list"""
         aircraft_list = self.get_sorted_aircraft()
         max_rows = height - start_y - 2
-        
-        target_icaos = set(code.upper() for code in self.config['target_icao_codes'])
         
         for i, aircraft in enumerate(aircraft_list[:max_rows]):
             y = start_y + i
@@ -428,10 +471,12 @@ class ADSBDashboard:
             dur_str = f"{aircraft.duration_seconds()}s"
             msg_str = f"{aircraft.messages}" if isinstance(aircraft.messages, int) else "---"
             
-            line = f"{aircraft.hex:<8} {aircraft.flight:<10} {alt_str:<8} {spd_str:<6} {trk_str:<4} {age_str:<5} {dur_str:<5} {msg_str:<6}"
+            # Add watchlist indicator
+            watchlist_indicator = "🎯" if getattr(aircraft, 'is_watchlist', False) else "  "
+            line = f"{watchlist_indicator} {aircraft.hex:<8} {aircraft.flight:<10} {alt_str:<8} {spd_str:<6} {trk_str:<4} {age_str:<5} {dur_str:<5} {msg_str:<6}"
             
-            # Highlight target aircraft
-            if aircraft.hex in target_icaos:
+            # Highlight watchlist aircraft in green
+            if getattr(aircraft, 'is_watchlist', False):
                 stdscr.addstr(y, 0, line[:width-1], curses.A_BOLD | curses.color_pair(3))
             else:
                 stdscr.addstr(y, 0, line[:width-1])

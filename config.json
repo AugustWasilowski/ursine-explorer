@@ -2,5 +2,17 @@
     "dump1090_host": "localhost",
     "dump1090_port": 8080,
     "receiver_control_port": 8081,
-    "target_icao_codes": []
+    "frequency": 1090000000,
+    "lna_gain": 40,
+    "vga_gain": 20,
+    "enable_hackrf_amp": true,
+    "target_icao_codes": [],
+    "meshtastic_port": "/dev/ttyUSB0",
+    "meshtastic_baud": 115200,
+    "log_alerts": true,
+    "alert_log_file": "alerts.log",
+    "alert_interval_sec": 300,
+    "dump1090_path": "/usr/bin/dump1090-fa",
+    "watchdog_timeout_sec": 60,
+    "poll_interval_sec": 1
 }
