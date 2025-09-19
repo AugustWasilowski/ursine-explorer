@@ -20,6 +20,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 import logging
+from collections import defaultdict, deque
+from urllib.parse import urlparse, parse_qs
 
 # Set up logging
 logging.basicConfig(
@@ -31,6 +33,102 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+class RateLimiter:
+    """Simple rate limiter for API endpoints"""
+    
+    def __init__(self, max_requests: int = 60, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests = defaultdict(deque)
+    
+    def is_allowed(self, client_ip: str) -> bool:
+        """Check if request is allowed for client IP"""
+        now = time.time()
+        client_requests = self.requests[client_ip]
+        
+        # Remove old requests outside the window
+        while client_requests and client_requests[0] < now - self.window_seconds:
+            client_requests.popleft()
+        
+        # Check if under limit
+        if len(client_requests) < self.max_requests:
+            client_requests.append(now)
+            return True
+        
+        return False
+    
+    def get_remaining_requests(self, client_ip: str) -> int:
+        """Get remaining requests for client IP"""
+        now = time.time()
+        client_requests = self.requests[client_ip]
+        
+        # Remove old requests outside the window
+        while client_requests and client_requests[0] < now - self.window_seconds:
+            client_requests.popleft()
+        
+        return max(0, self.max_requests - len(client_requests))
+    
+    def get_reset_time(self, client_ip: str) -> float:
+        """Get time when rate limit resets for client IP"""
+        client_requests = self.requests[client_ip]
+        if not client_requests:
+            return time.time()
+        
+        return client_requests[0] + self.window_seconds
+
+class APILogger:
+    """Enhanced logging for API access and errors"""
+    
+    def __init__(self):
+        self.access_logger = logging.getLogger('api.access')
+        self.error_logger = logging.getLogger('api.error')
+        
+        # Create separate handlers for API logs
+        access_handler = logging.FileHandler('api_access.log')
+        error_handler = logging.FileHandler('api_errors.log')
+        
+        # Format for access logs
+        access_formatter = logging.Formatter(
+            '%(asctime)s - %(message)s'
+        )
+        access_handler.setFormatter(access_formatter)
+        
+        # Format for error logs
+        error_formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        )
+        error_handler.setFormatter(error_formatter)
+        
+        self.access_logger.addHandler(access_handler)
+        self.error_logger.addHandler(error_handler)
+        self.access_logger.setLevel(logging.INFO)
+        self.error_logger.setLevel(logging.ERROR)
+    
+    def log_access(self, client_ip: str, method: str, path: str, status_code: int, 
+                   response_size: int, user_agent: str = None, duration_ms: float = None):
+        """Log API access"""
+        message = f"{client_ip} - {method} {path} - {status_code} - {response_size} bytes"
+        if duration_ms is not None:
+            message += f" - {duration_ms:.2f}ms"
+        if user_agent:
+            message += f" - {user_agent}"
+        
+        self.access_logger.info(message)
+    
+    def log_error(self, client_ip: str, method: str, path: str, error: str, 
+                  status_code: int = 500, details: str = None):
+        """Log API error"""
+        message = f"{client_ip} - {method} {path} - ERROR {status_code}: {error}"
+        if details:
+            message += f" - {details}"
+        
+        self.error_logger.error(message)
+    
+    def log_rate_limit(self, client_ip: str, method: str, path: str):
+        """Log rate limit violation"""
+        message = f"{client_ip} - {method} {path} - RATE_LIMITED"
+        self.error_logger.warning(message)
 
 class Aircraft:
     """Aircraft data structure"""
@@ -291,35 +389,285 @@ class Dump1090Manager:
         self.last_data_time = datetime.now()
 
 class ADSBHTTPHandler(BaseHTTPRequestHandler):
-    """HTTP handler for aircraft data API"""
+    """Enhanced HTTP handler for aircraft data API with pyModeS integration"""
+    
+    # Class-level rate limiter and logger
+    rate_limiter = RateLimiter(max_requests=120, window_seconds=60)  # 120 requests per minute
+    api_logger = APILogger()
     
     def do_GET(self):
-        if self.path == '/data/aircraft.json':
-            # Get aircraft data from server
-            server = self.server.adsb_server
-            aircraft_data = server.get_aircraft_data()
+        start_time = time.time()
+        client_ip = self.client_address[0]
+        user_agent = self.headers.get('User-Agent', 'Unknown')
+        
+        try:
+            # Rate limiting check
+            if not self.rate_limiter.is_allowed(client_ip):
+                remaining = self.rate_limiter.get_remaining_requests(client_ip)
+                reset_time = self.rate_limiter.get_reset_time(client_ip)
+                
+                self.api_logger.log_rate_limit(client_ip, 'GET', self.path)
+                
+                error_data = {
+                    "error": "Rate Limit Exceeded",
+                    "message": "Too many requests. Please slow down.",
+                    "status_code": 429,
+                    "timestamp": datetime.now().isoformat(),
+                    "rate_limit": {
+                        "remaining": remaining,
+                        "reset_time": reset_time,
+                        "limit": self.rate_limiter.max_requests,
+                        "window_seconds": self.rate_limiter.window_seconds
+                    }
+                }
+                
+                self._send_json_response(error_data, 429)
+                return
             
-            self.send_response(200)
+            # Parse and validate request
+            parsed_path = urlparse(self.path)
+            path = parsed_path.path
+            query_params = parse_qs(parsed_path.query)
+            
+            # Validate query parameters
+            validation_error = self._validate_query_params(path, query_params)
+            if validation_error:
+                self._send_error_response(400, "Bad Request", validation_error)
+                return
+            
+            # Route requests
+            if path == '/data/aircraft.json':
+                # Get aircraft data from server
+                server = self.server.adsb_server
+                aircraft_data = server.get_aircraft_data()
+                
+                self._send_json_response(aircraft_data)
+                
+            elif path == '/data/aircraft_enhanced.json':
+                # Get enhanced aircraft data with all pyModeS fields
+                server = self.server.adsb_server
+                aircraft_data = server.get_enhanced_aircraft_data()
+                
+                self._send_json_response(aircraft_data)
+                
+            elif path == '/data/fft.json':
+                # Get FFT data from server
+                server = self.server.adsb_server
+                fft_data = server.get_fft_data()
+                
+                self._send_json_response(fft_data)
+                
+            elif path == '/api/status':
+                # Get system status and diagnostics
+                server = self.server.adsb_server
+                status_data = server.get_detailed_status()
+                
+                self._send_json_response(status_data)
+                
+            elif path == '/api/stats':
+                # Get processing statistics
+                server = self.server.adsb_server
+                stats_data = server.get_processing_stats()
+                
+                self._send_json_response(stats_data)
+                
+            elif path == '/api/health':
+                # Health check endpoint
+                server = self.server.adsb_server
+                health_data = server.get_health_status()
+                
+                # Return appropriate status code based on health
+                status_code = 200 if health_data.get('healthy', False) else 503
+                self._send_json_response(health_data, status_code)
+                
+            elif path == '/api/sources':
+                # Message source status
+                server = self.server.adsb_server
+                sources_data = server.get_sources_status()
+                
+                self._send_json_response(sources_data)
+                
+            elif path == '/api/decoder':
+                # Decoder performance metrics
+                server = self.server.adsb_server
+                decoder_data = server.get_decoder_metrics()
+                
+                self._send_json_response(decoder_data)
+                
+            else:
+                self._send_error_response(404, "Not Found", "The requested endpoint was not found")
+                
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            error_msg = str(e)
+            
+            self.api_logger.log_error(client_ip, 'GET', self.path, error_msg, 500, 
+                                    f"Duration: {duration_ms:.2f}ms")
+            logger.error(f"HTTP handler error: {e}")
+            self._send_error_response(500, "Internal Server Error", "An internal error occurred")
+    
+    def _validate_query_params(self, path: str, query_params: dict) -> Optional[str]:
+        """Validate query parameters for the given path"""
+        
+        # Define allowed parameters for each endpoint
+        allowed_params = {
+            '/data/aircraft.json': ['format', 'limit'],
+            '/data/aircraft_enhanced.json': ['format', 'limit', 'include_raw'],
+            '/api/stats': ['period', 'format'],
+            '/api/status': ['format'],
+            '/api/health': ['format'],
+            '/api/sources': ['format'],
+            '/api/decoder': ['format', 'detailed']
+        }
+        
+        if path not in allowed_params:
+            return None  # No validation for unknown paths (will be 404)
+        
+        # Check for unknown parameters
+        for param in query_params:
+            if param not in allowed_params[path]:
+                return f"Unknown query parameter: {param}"
+        
+        # Validate specific parameter values
+        if 'limit' in query_params:
+            try:
+                limit = int(query_params['limit'][0])
+                if limit < 1 or limit > 1000:
+                    return "Parameter 'limit' must be between 1 and 1000"
+            except (ValueError, IndexError):
+                return "Parameter 'limit' must be a valid integer"
+        
+        if 'format' in query_params:
+            format_val = query_params['format'][0].lower()
+            if format_val not in ['json', 'compact']:
+                return "Parameter 'format' must be 'json' or 'compact'"
+        
+        if 'period' in query_params:
+            period_val = query_params['period'][0].lower()
+            if period_val not in ['1m', '5m', '15m', '1h']:
+                return "Parameter 'period' must be one of: 1m, 5m, 15m, 1h"
+        
+        return None
+    
+    def _send_json_response(self, data: dict, status_code: int = 200):
+        """Send JSON response with proper headers and logging"""
+        start_time = time.time()
+        client_ip = self.client_address[0]
+        user_agent = self.headers.get('User-Agent', 'Unknown')
+        
+        try:
+            json_data = json.dumps(data, indent=2)
+            response_size = len(json_data)
+            
+            # Add rate limit headers
+            remaining = self.rate_limiter.get_remaining_requests(client_ip)
+            reset_time = int(self.rate_limiter.get_reset_time(client_ip))
+            
+            self.send_response(status_code)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(aircraft_data).encode())
-        elif self.path == '/data/fft.json':
-            # Get FFT data from server
-            server = self.server.adsb_server
-            fft_data = server.get_fft_data()
+            self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Content-Length', str(response_size))
             
-            self.send_response(200)
+            # Rate limit headers
+            self.send_header('X-RateLimit-Limit', str(self.rate_limiter.max_requests))
+            self.send_header('X-RateLimit-Remaining', str(remaining))
+            self.send_header('X-RateLimit-Reset', str(reset_time))
+            
+            # API version header
+            self.send_header('X-API-Version', '2.0')
+            
+            self.end_headers()
+            
+            self.wfile.write(json_data.encode('utf-8'))
+            
+            # Log successful request
+            duration_ms = (time.time() - start_time) * 1000
+            self.api_logger.log_access(client_ip, 'GET', self.path, status_code, 
+                                     response_size, user_agent, duration_ms)
+            
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            error_msg = f"Failed to serialize response: {str(e)}"
+            
+            self.api_logger.log_error(client_ip, 'GET', self.path, error_msg, 500,
+                                    f"Duration: {duration_ms:.2f}ms")
+            logger.error(f"Error sending JSON response: {e}")
+            self._send_error_response(500, "Internal Server Error", "Failed to serialize response")
+    
+    def _send_error_response(self, status_code: int, error: str, message: str):
+        """Send structured error response with logging"""
+        start_time = time.time()
+        client_ip = self.client_address[0]
+        user_agent = self.headers.get('User-Agent', 'Unknown')
+        
+        try:
+            error_data = {
+                "error": error,
+                "message": message,
+                "status_code": status_code,
+                "timestamp": datetime.now().isoformat(),
+                "path": self.path,
+                "method": "GET"
+            }
+            
+            # Add request ID for tracking
+            import uuid
+            error_data["request_id"] = str(uuid.uuid4())[:8]
+            
+            json_data = json.dumps(error_data, indent=2)
+            response_size = len(json_data)
+            
+            # Add rate limit headers even for errors
+            remaining = self.rate_limiter.get_remaining_requests(client_ip)
+            reset_time = int(self.rate_limiter.get_reset_time(client_ip))
+            
+            self.send_response(status_code)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Length', str(response_size))
+            
+            # Rate limit headers
+            self.send_header('X-RateLimit-Limit', str(self.rate_limiter.max_requests))
+            self.send_header('X-RateLimit-Remaining', str(remaining))
+            self.send_header('X-RateLimit-Reset', str(reset_time))
+            
+            # API version header
+            self.send_header('X-API-Version', '2.0')
+            
             self.end_headers()
-            self.wfile.write(json.dumps(fft_data).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
+            
+            self.wfile.write(json_data.encode('utf-8'))
+            
+            # Log error request
+            duration_ms = (time.time() - start_time) * 1000
+            self.api_logger.log_error(client_ip, 'GET', self.path, error, status_code,
+                                    f"Message: {message}, Duration: {duration_ms:.2f}ms, Request ID: {error_data['request_id']}")
+            
+        except Exception as e:
+            logger.error(f"Error sending error response: {e}")
+            # Fallback to basic HTTP error
+            try:
+                self.send_response(status_code)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Error {status_code}: {error}".encode('utf-8'))
+            except:
+                pass  # Give up if we can't even send basic response
+    
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests"""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
     
     def log_message(self, format, *args):
-        # Suppress HTTP server logs
+        # Use our enhanced API logger instead of default logging
+        # The actual logging is handled in _send_json_response and _send_error_response
         pass
 
 class ControlHandler(socketserver.BaseRequestHandler):
@@ -369,6 +717,7 @@ class ADSBServer:
         self.httpd = None
         self.control_server = None
         self.running = False
+        self.start_time = datetime.now()
         
         # Statistics
         self.stats = {
@@ -608,10 +957,14 @@ class ADSBServer:
             pass
     
     def get_aircraft_data(self) -> dict:
-        """Get current aircraft data for API"""
+        """Get current aircraft data for API (legacy format for backward compatibility)"""
         aircraft_list = []
         for aircraft in self.aircraft.values():
-            aircraft_list.append(aircraft.to_dict())
+            # Use legacy format for backward compatibility
+            if hasattr(aircraft, 'to_legacy_dict'):
+                aircraft_list.append(aircraft.to_legacy_dict())
+            else:
+                aircraft_list.append(aircraft.to_dict())
         
         # Convert datetime objects to strings for JSON serialization
         stats_copy = self.stats.copy()
@@ -623,6 +976,312 @@ class ADSBServer:
             "messages": self.stats['messages_total'],
             "aircraft": aircraft_list,
             "stats": stats_copy
+        }
+    
+    def get_enhanced_aircraft_data(self) -> dict:
+        """Get enhanced aircraft data with all pyModeS fields"""
+        aircraft_list = []
+        for aircraft in self.aircraft.values():
+            # Use enhanced format with all available fields
+            if hasattr(aircraft, 'to_api_dict'):
+                aircraft_list.append(aircraft.to_api_dict())
+            else:
+                # Fallback to legacy format
+                aircraft_list.append(aircraft.to_dict())
+        
+        # Convert datetime objects to strings for JSON serialization
+        stats_copy = self.stats.copy()
+        if stats_copy.get('last_update'):
+            stats_copy['last_update'] = stats_copy['last_update'].isoformat()
+        
+        return {
+            "now": time.time(),
+            "messages": self.stats['messages_total'],
+            "aircraft": aircraft_list,
+            "stats": stats_copy,
+            "enhanced_fields": {
+                "alt_gnss": "GNSS altitude in feet",
+                "vertical_rate": "Vertical rate in feet per minute",
+                "true_airspeed": "True airspeed in knots",
+                "indicated_airspeed": "Indicated airspeed in knots", 
+                "mach_number": "Mach number",
+                "magnetic_heading": "Magnetic heading in degrees",
+                "roll_angle": "Roll angle in degrees",
+                "navigation_accuracy": "Navigation accuracy metrics",
+                "surveillance_status": "Surveillance status",
+                "data_sources": "List of message types received",
+                "first_seen": "First time aircraft was detected"
+            }
+        }
+    
+    def get_detailed_status(self) -> dict:
+        """Get detailed system status and diagnostics"""
+        # Convert datetime objects to strings for JSON serialization
+        stats_copy = self.stats.copy()
+        if stats_copy.get('last_update'):
+            stats_copy['last_update'] = stats_copy['last_update'].isoformat()
+        
+        # Get message source status if available
+        source_status = {}
+        if hasattr(self, 'message_sources'):
+            for source_name, source in self.message_sources.items():
+                if hasattr(source, 'get_status'):
+                    source_status[source_name] = source.get_status()
+        
+        # Get decoder performance if available
+        decoder_stats = {}
+        if hasattr(self, 'decoder') and hasattr(self.decoder, 'get_stats'):
+            decoder_stats = self.decoder.get_stats()
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "system": {
+                "dump1090_running": self.dump1090_manager.is_running() if self.dump1090_manager else False,
+                "meshtastic_connected": self.meshtastic.serial_conn is not None if self.meshtastic else False,
+                "http_server_running": self.httpd is not None,
+                "control_server_running": self.control_server is not None
+            },
+            "aircraft": {
+                "total_tracked": len(self.aircraft),
+                "watchlist_count": len([a for a in self.aircraft.values() if a.is_watchlist]),
+                "with_position": len([a for a in self.aircraft.values() if hasattr(a, 'has_position') and a.has_position()]),
+                "with_velocity": len([a for a in self.aircraft.values() if hasattr(a, 'has_velocity') and a.has_velocity()]),
+                "with_altitude": len([a for a in self.aircraft.values() if hasattr(a, 'has_altitude') and a.has_altitude()])
+            },
+            "watchlist": {
+                "size": len(self.watchlist),
+                "codes": list(self.watchlist)
+            },
+            "message_sources": source_status,
+            "decoder": decoder_stats,
+            "stats": stats_copy
+        }
+    
+    def get_processing_stats(self) -> dict:
+        """Get message processing statistics and performance metrics"""
+        # Convert datetime objects to strings for JSON serialization
+        stats_copy = self.stats.copy()
+        if stats_copy.get('last_update'):
+            stats_copy['last_update'] = stats_copy['last_update'].isoformat()
+        
+        # Calculate rates
+        current_time = datetime.now()
+        uptime_seconds = 0
+        if hasattr(self, 'start_time'):
+            uptime_seconds = (current_time - self.start_time).total_seconds()
+        
+        message_rate = 0
+        if uptime_seconds > 0 and self.stats['messages_total'] > 0:
+            message_rate = self.stats['messages_total'] / uptime_seconds
+        
+        # Get memory usage if available
+        memory_info = {}
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_info = {
+                "rss_mb": process.memory_info().rss / 1024 / 1024,
+                "vms_mb": process.memory_info().vms / 1024 / 1024,
+                "percent": process.memory_percent()
+            }
+        except ImportError:
+            memory_info = {"error": "psutil not available"}
+        
+        return {
+            "timestamp": current_time.isoformat(),
+            "uptime_seconds": uptime_seconds,
+            "performance": {
+                "message_rate_per_second": round(message_rate, 2),
+                "aircraft_update_rate": round(self.stats['update_count'] / max(uptime_seconds, 1), 2),
+                "error_rate": round(self.stats['errors'] / max(self.stats['messages_total'], 1) * 100, 2)
+            },
+            "memory": memory_info,
+            "counters": stats_copy,
+            "aircraft_distribution": {
+                "by_message_count": self._get_aircraft_message_distribution(),
+                "by_age": self._get_aircraft_age_distribution()
+            }
+        }
+    
+    def _get_aircraft_message_distribution(self) -> dict:
+        """Get distribution of aircraft by message count"""
+        distribution = {"1-10": 0, "11-50": 0, "51-100": 0, "100+": 0}
+        
+        for aircraft in self.aircraft.values():
+            msg_count = getattr(aircraft, 'message_count', getattr(aircraft, 'messages', 0))
+            if msg_count <= 10:
+                distribution["1-10"] += 1
+            elif msg_count <= 50:
+                distribution["11-50"] += 1
+            elif msg_count <= 100:
+                distribution["51-100"] += 1
+            else:
+                distribution["100+"] += 1
+        
+        return distribution
+    
+    def _get_aircraft_age_distribution(self) -> dict:
+        """Get distribution of aircraft by age since last seen"""
+        distribution = {"0-30s": 0, "30s-2m": 0, "2m-5m": 0, "5m+": 0}
+        
+        for aircraft in self.aircraft.values():
+            if hasattr(aircraft, 'calculate_age_seconds'):
+                age = aircraft.calculate_age_seconds()
+            else:
+                age = aircraft.age_seconds()
+            
+            if age <= 30:
+                distribution["0-30s"] += 1
+            elif age <= 120:
+                distribution["30s-2m"] += 1
+            elif age <= 300:
+                distribution["2m-5m"] += 1
+            else:
+                distribution["5m+"] += 1
+        
+        return distribution
+    
+    def get_health_status(self) -> dict:
+        """Get overall system health status"""
+        current_time = datetime.now()
+        
+        # Check various system components
+        dump1090_healthy = self.dump1090_manager.is_running() if self.dump1090_manager else False
+        
+        # Check if we're receiving data recently
+        data_fresh = False
+        if self.stats.get('last_update'):
+            if isinstance(self.stats['last_update'], str):
+                last_update = datetime.fromisoformat(self.stats['last_update'])
+            else:
+                last_update = self.stats['last_update']
+            data_age = (current_time - last_update).total_seconds()
+            data_fresh = data_age < 30  # Data should be less than 30 seconds old
+        
+        # Check error rate
+        error_rate = 0
+        if self.stats['messages_total'] > 0:
+            error_rate = (self.stats['errors'] / self.stats['messages_total']) * 100
+        low_error_rate = error_rate < 5  # Less than 5% error rate
+        
+        # Overall health
+        healthy = dump1090_healthy and data_fresh and low_error_rate
+        
+        health_checks = {
+            "dump1090_running": {
+                "status": "pass" if dump1090_healthy else "fail",
+                "description": "dump1090 process is running"
+            },
+            "data_freshness": {
+                "status": "pass" if data_fresh else "fail", 
+                "description": "Receiving fresh aircraft data",
+                "last_update": self.stats.get('last_update', 'never')
+            },
+            "error_rate": {
+                "status": "pass" if low_error_rate else "warn",
+                "description": f"Error rate is {error_rate:.2f}%",
+                "threshold": "< 5%"
+            },
+            "aircraft_tracking": {
+                "status": "pass" if len(self.aircraft) >= 0 else "fail",
+                "description": f"Tracking {len(self.aircraft)} aircraft"
+            }
+        }
+        
+        return {
+            "timestamp": current_time.isoformat(),
+            "healthy": healthy,
+            "status": "healthy" if healthy else "unhealthy",
+            "checks": health_checks,
+            "uptime_seconds": (current_time - self.start_time).total_seconds()
+        }
+    
+    def get_sources_status(self) -> dict:
+        """Get detailed status of all message sources"""
+        sources = {}
+        
+        # dump1090 source status
+        if self.dump1090_manager:
+            sources["dump1090"] = {
+                "type": "dump1090",
+                "running": self.dump1090_manager.is_running(),
+                "last_data_time": self.dump1090_manager.last_data_time.isoformat() if self.dump1090_manager.last_data_time else None,
+                "watchdog_timeout": self.dump1090_manager.watchdog_timeout,
+                "needs_restart": self.dump1090_manager.needs_restart(),
+                "config": {
+                    "frequency": self.config.get('frequency', 1090000000),
+                    "lna_gain": self.config.get('lna_gain', 40),
+                    "vga_gain": self.config.get('vga_gain', 20),
+                    "enable_amp": self.config.get('enable_hackrf_amp', True)
+                }
+            }
+        
+        # Check for pyModeS message sources if available
+        if hasattr(self, 'message_sources'):
+            for source_name, source in self.message_sources.items():
+                if hasattr(source, 'get_detailed_status'):
+                    sources[source_name] = source.get_detailed_status()
+                elif hasattr(source, 'is_connected'):
+                    sources[source_name] = {
+                        "type": "network_source",
+                        "connected": source.is_connected(),
+                        "status": "connected" if source.is_connected() else "disconnected"
+                    }
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "sources": sources,
+            "total_sources": len(sources),
+            "active_sources": len([s for s in sources.values() if s.get('running', False) or s.get('connected', False)])
+        }
+    
+    def get_decoder_metrics(self) -> dict:
+        """Get pyModeS decoder performance metrics"""
+        current_time = datetime.now()
+        
+        # Basic decoder stats
+        decoder_stats = {
+            "messages_processed": self.stats['messages_total'],
+            "decode_errors": self.stats['errors'],
+            "success_rate": 0
+        }
+        
+        if self.stats['messages_total'] > 0:
+            decoder_stats["success_rate"] = ((self.stats['messages_total'] - self.stats['errors']) / self.stats['messages_total']) * 100
+        
+        # Message type distribution
+        message_types = {}
+        position_calculations = {"successful": 0, "failed": 0}
+        
+        # Analyze aircraft data for decoder performance
+        for aircraft in self.aircraft.values():
+            if hasattr(aircraft, 'data_sources'):
+                for source in aircraft.data_sources:
+                    message_types[source] = message_types.get(source, 0) + 1
+            
+            # Count position calculation success
+            if hasattr(aircraft, 'has_position') and aircraft.has_position():
+                position_calculations["successful"] += 1
+            else:
+                position_calculations["failed"] += 1
+        
+        # Get pyModeS specific stats if available
+        pymodes_stats = {}
+        if hasattr(self, 'decoder') and hasattr(self.decoder, 'get_performance_stats'):
+            pymodes_stats = self.decoder.get_performance_stats()
+        
+        return {
+            "timestamp": current_time.isoformat(),
+            "decoder_type": "pyModeS" if hasattr(self, 'decoder') else "legacy",
+            "performance": decoder_stats,
+            "message_types": message_types,
+            "position_calculations": position_calculations,
+            "pymodes_specific": pymodes_stats,
+            "aircraft_with_enhanced_data": {
+                "true_airspeed": len([a for a in self.aircraft.values() if hasattr(a, 'true_airspeed') and a.true_airspeed is not None]),
+                "magnetic_heading": len([a for a in self.aircraft.values() if hasattr(a, 'magnetic_heading') and a.magnetic_heading is not None]),
+                "navigation_accuracy": len([a for a in self.aircraft.values() if hasattr(a, 'navigation_accuracy') and a.navigation_accuracy is not None])
+            }
         }
     
     def get_status(self) -> dict:
