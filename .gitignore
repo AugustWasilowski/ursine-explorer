@@ -43,3 +43,4 @@ Thumbs.db
 # Project specific
 config.json.local
 adsb-monitor.log
+.kiro/
