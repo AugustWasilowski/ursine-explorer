@@ -184,14 +184,13 @@ class Dump1090Manager:
             
             # Check if it's dump1090-mutability (different command line options)
             if 'mutability' in dump1090_path:
-                # dump1090-mutability uses different options - try without device specification
+                # dump1090-mutability uses basic options - no HackRF support, no HTTP port
                 cmd = [
                     dump1090_path,
                     '--freq', str(self.config.get('frequency', 1090000000)),
                     '--net',
                     '--net-ro-port', '30005',
-                    '--net-sbs-port', '30003',
-                    '--net-http-port', str(self.config.get('dump1090_port', 8080))
+                    '--net-sbs-port', '30003'
                 ]
                 
                 # Add basic gain setting for mutability

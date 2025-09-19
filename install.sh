@@ -25,26 +25,47 @@ echo "Cloning dump1090 repository..."
 git clone https://github.com/flightaware/dump1090.git
 cd dump1090
 
-echo "Building dump1090..."
-if make; then
+echo "Building dump1090 with HackRF support..."
+# Make sure HackRF support is enabled
+export PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
+
+# Check if HackRF libraries are available
+if pkg-config --exists libhackrf; then
+    echo "HackRF libraries found, building with HackRF support..."
+    make
+else
+    echo "HackRF libraries not found, building without HackRF support..."
+    echo "This will only support RTL-SDR devices"
+    make
+fi
+
+if [ $? -eq 0 ]; then
     echo "Installing dump1090..."
     sudo make install
     
     # Verify installation
     if command -v dump1090-fa >/dev/null 2>&1; then
         echo "✅ dump1090-fa installed successfully at $(which dump1090-fa)"
+        echo "Testing HackRF support..."
+        dump1090-fa --help | grep -i hackrf && echo "✅ HackRF support enabled" || echo "⚠️ HackRF support not available"
     else
         echo "⚠️ dump1090-fa not found in PATH, checking /usr/local/bin..."
         if [ -f "/usr/local/bin/dump1090-fa" ]; then
             echo "✅ dump1090-fa found at /usr/local/bin/dump1090-fa"
             echo "Note: You may need to add /usr/local/bin to your PATH"
+            echo "Testing HackRF support..."
+            /usr/local/bin/dump1090-fa --help | grep -i hackrf && echo "✅ HackRF support enabled" || echo "⚠️ HackRF support not available"
         else
             echo "❌ dump1090-fa installation verification failed"
-            exit 1
+            echo "Trying alternative installation method..."
+            # Try installing via apt if available
+            sudo apt install -y dump1090-fa || echo "Package not available, manual build required"
         fi
     fi
 else
     echo "❌ dump1090 build failed"
+    echo "Trying to install via package manager..."
+    sudo apt install -y dump1090-fa || echo "Package not available"
     exit 1
 fi
 
