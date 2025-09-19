@@ -184,7 +184,7 @@ class Dump1090Manager:
             
             # Check if it's dump1090-mutability (different command line options)
             if 'mutability' in dump1090_path:
-                # dump1090-mutability uses different options
+                # dump1090-mutability uses simpler options
                 cmd = [
                     dump1090_path,
                     '--device', 'hackrf',
@@ -195,14 +195,9 @@ class Dump1090Manager:
                     '--net-http-port', str(self.config.get('dump1090_port', 8080))
                 ]
                 
-                # Add gain settings for mutability
-                if self.config.get('enable_hackrf_amp', True):
-                    cmd.append('--enable-amp')
-                
+                # Add basic gain setting for mutability
                 lna_gain = self.config.get('lna_gain', 40)
-                vga_gain = self.config.get('vga_gain', 20)
-                cmd.extend(['--lna-gain', str(lna_gain)])
-                cmd.extend(['--vga-gain', str(vga_gain)])
+                cmd.extend(['--gain', str(lna_gain)])
             else:
                 # dump1090-fa options
                 cmd = [
