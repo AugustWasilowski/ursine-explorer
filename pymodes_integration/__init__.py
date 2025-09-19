@@ -8,7 +8,7 @@ UrsineExplorer system while leveraging pyModeS's proven algorithms.
 
 from .config import PyModeSConfig
 from .decoder import PyModeSDecode
-from .message_source import MessageSourceManager, MessageSource
+from .message_source import MessageSourceManager, MessageSource, Dump1090Source, NetworkSource, DummyMessageSource
 from .aircraft import EnhancedAircraft
 
 __version__ = "1.0.0"
@@ -17,5 +17,8 @@ __all__ = [
     "PyModeSDecode", 
     "MessageSourceManager",
     "MessageSource",
+    "Dump1090Source",
+    "NetworkSource", 
+    "DummyMessageSource",
     "EnhancedAircraft"
 ]
