@@ -110,7 +110,7 @@ class ADSBDashboard:
                 config = json.load(f)
                 # Set defaults if not present
                 config.setdefault('dump1090_host', 'localhost')
-                config.setdefault('dump1090_port', 8080)
+                config.setdefault('dump1090_port', 40005)
                 config.setdefault('receiver_control_port', 8081)
                 config.setdefault('target_icao_codes', [])
                 config.setdefault('frequency', 1090000000)
@@ -128,7 +128,7 @@ class ADSBDashboard:
             # Return default config if file not found
             return {
                 'dump1090_host': 'localhost',
-                'dump1090_port': 8080,
+                'dump1090_port': 40005,
                 'receiver_control_port': 8081,
                 'target_icao_codes': [],
                 'frequency': 1090000000,
@@ -228,7 +228,8 @@ class ADSBDashboard:
     def fetch_aircraft_data(self) -> Optional[dict]:
         """Fetch aircraft data from ADS-B receiver"""
         try:
-            url = f"http://{self.config['dump1090_host']}:{self.config['dump1090_port']}/data/aircraft.json"
+            # The HTTP server is on port 8080, not the dump1090 port
+            url = f"http://{self.config['dump1090_host']}:8080/data/aircraft.json"
             response = requests.get(url, timeout=2)
             response.raise_for_status()
             return response.json()
