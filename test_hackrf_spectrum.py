@@ -10,7 +10,7 @@ import time
 import sys
 
 try:
-    from gnuradio import gr, blocks, filter
+    from gnuradio import gr, blocks, fft
     import osmosdr
 except ImportError as e:
     print(f"GNU Radio not installed: {e}")
@@ -40,7 +40,7 @@ class SpectrumTest(gr.top_block):
         self.osmosdr_source.set_bb_gain(32, 0)   # BB gain
         
         # FFT and file sink
-        self.fft = filter.fft_vcc(self.fft_size, True, (), True)
+        self.fft = fft.fft_vcc(self.fft_size, True, (), True)
         self.complex_to_mag_squared = blocks.complex_to_mag_squared(self.fft_size)
         self.vector_to_stream = blocks.vector_to_stream(gr.sizeof_float*1, self.fft_size)
         self.file_sink = blocks.file_sink(gr.sizeof_float*1, "/tmp/hackrf_test_spectrum.dat", False)

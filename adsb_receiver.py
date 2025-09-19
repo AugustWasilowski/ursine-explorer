@@ -15,7 +15,7 @@ import signal
 import sys
 
 try:
-    from gnuradio import gr, blocks, filter, analog, digital
+    from gnuradio import gr, blocks, filter, analog, digital, fft
     import osmosdr  # Import osmosdr directly, not from gnuradio
     import numpy as np
 except ImportError as e:
@@ -52,7 +52,7 @@ class ADSBReceiver(gr.top_block):
             
             # FFT for waterfall display
             self.fft_size = 1024
-            self.fft = filter.fft_vcc(self.fft_size, True, (), True)
+            self.fft = fft.fft_vcc(self.fft_size, True, (), True)
             self.complex_to_mag_squared = blocks.complex_to_mag_squared(self.fft_size)
             self.vector_to_stream = blocks.vector_to_stream(gr.sizeof_float*1, self.fft_size)
             
