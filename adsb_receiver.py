@@ -205,7 +205,7 @@ class Dump1090Manager:
                     '--net',
                     '--net-ro-port', str(self.config.get('dump1090_port', 30005)),
                     '--net-sbs-port', '30003',
-                    '--write-json', '/tmp/dump1090',
+                    '--write-json', '/tmp/adsb_json',
                     '--write-json-every', '1'
                 ]
                 
@@ -461,7 +461,7 @@ class ADSBServer:
         """Fetch aircraft data from dump1090 JSON files"""
         try:
             # Read aircraft data from JSON file
-            aircraft_file = '/tmp/dump1090/aircraft.json'
+            aircraft_file = '/tmp/adsb_json/aircraft.json'
             if os.path.exists(aircraft_file):
                 with open(aircraft_file, 'r') as f:
                     aircraft_data = json.load(f)
