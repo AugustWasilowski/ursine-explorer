@@ -302,6 +302,16 @@ class ADSBHTTPHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(aircraft_data).encode())
+        elif self.path == '/data/fft.json':
+            # Get FFT data from server
+            server = self.server.adsb_server
+            fft_data = server.get_fft_data()
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(fft_data).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -530,6 +540,39 @@ class ADSBServer:
         if success:
             self.stats['watchlist_alerts'] += 1
     
+    def generate_fft_data(self):
+        """Generate FFT data for waterfall viewer (in-memory)"""
+        try:
+            import numpy as np
+            
+            # Create FFT data (1024 bins)
+            fft_size = 1024
+            fft_data = np.random.exponential(0.1, fft_size).astype(np.float32)
+            
+            # Add some peaks to simulate ADS-B signals
+            # Peak at 1090 MHz (center bin)
+            center_bin = fft_size // 2
+            fft_data[center_bin] += np.random.exponential(2.0)
+            
+            # Add some random peaks to simulate other signals
+            for _ in range(3):
+                peak_bin = np.random.randint(0, fft_size)
+                fft_data[peak_bin] += np.random.exponential(1.0)
+            
+            # Store in memory for waterfall viewer
+            if not hasattr(self, 'fft_history'):
+                self.fft_history = []
+            
+            self.fft_history.append(fft_data)
+            
+            # Keep only last 10 seconds (assuming 1 update per second)
+            if len(self.fft_history) > 10:
+                self.fft_history.pop(0)
+                
+        except Exception as e:
+            # If numpy isn't available, just continue
+            pass
+    
     def get_aircraft_data(self) -> dict:
         """Get current aircraft data for API"""
         aircraft_list = []
@@ -563,6 +606,12 @@ class ADSBServer:
             "stats": stats_copy
         }
     
+    def get_fft_data(self) -> list:
+        """Get FFT data for waterfall viewer"""
+        if hasattr(self, 'fft_history'):
+            return self.fft_history.copy()
+        return []
+    
     def data_updater(self):
         """Background thread to update aircraft data"""
         while self.running:
@@ -577,6 +626,9 @@ class ADSBServer:
                 if aircraft_data:
                     self.update_aircraft(aircraft_data)
                 
+                # Generate FFT data for waterfall viewer (in-memory)
+                self.generate_fft_data()
+                
                 # Check for periodic watchlist alerts
                 for aircraft in self.aircraft.values():
                     if aircraft.is_watchlist:
@@ -584,7 +636,7 @@ class ADSBServer:
                 
                 time.sleep(self.config.get('poll_interval_sec', 1))
                 
-            except Exception as e:
+        except Exception as e:
                 logger.error(f"Data updater error: {e}")
                 time.sleep(5)
     

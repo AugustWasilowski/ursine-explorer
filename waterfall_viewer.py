@@ -15,8 +15,9 @@ from collections import deque
 from datetime import datetime
 
 class WaterfallViewer:
-    def __init__(self, fft_file="/tmp/adsb_fft.dat", fft_size=1024):
-        self.fft_file = fft_file
+    def __init__(self, receiver_host="localhost", receiver_port=8080, fft_size=1024):
+        self.receiver_host = receiver_host
+        self.receiver_port = receiver_port
         self.fft_size = fft_size
         self.running = True
         
@@ -37,7 +38,7 @@ class WaterfallViewer:
         # Display parameters
         self.min_db = -80  # Minimum dB level
         self.max_db = -20  # Maximum dB level
-        self.update_rate = 10  # Updates per second
+        self.update_rate = 2  # Updates per second
         
         # ASCII characters for intensity (darkest to brightest)
         self.intensity_chars = " .:-=+*#%@"
@@ -45,44 +46,33 @@ class WaterfallViewer:
         # Statistics
         self.stats = {
             'updates': 0,
-            'file_size': 0,
             'last_update': None,
             'peak_freq': 0,
             'peak_power': -999,
             'avg_power': -999,
-            'adsb_power': -999  # Power at 1090 MHz
+            'adsb_power': -999,  # Power at 1090 MHz
+            'connection_status': 'Disconnected'
         }
     
-    def read_fft_data(self):
-        """Read FFT data from file"""
+    def fetch_fft_data(self):
+        """Fetch FFT data from receiver via HTTP"""
         try:
-            if not os.path.exists(self.fft_file):
-                return None
+            import requests
             
-            # Get file size
-            file_size = os.path.getsize(self.fft_file)
-            self.stats['file_size'] = file_size
+            url = f"http://{self.receiver_host}:{self.receiver_port}/data/fft.json"
+            response = requests.get(url, timeout=1)
+            response.raise_for_status()
             
-            if file_size < self.fft_size * 4:  # 4 bytes per float
-                return None
+            fft_history = response.json()
+            if fft_history and len(fft_history) > 0:
+                # Get the most recent FFT data
+                latest_fft = fft_history[-1]
+                if len(latest_fft) == self.fft_size:
+                    self.stats['connection_status'] = 'Connected'
+                    return np.array(latest_fft, dtype=np.float32)
             
-            # Read the last complete FFT frame
-            with open(self.fft_file, 'rb') as f:
-                # Seek to the last complete frame
-                frames_available = file_size // (self.fft_size * 4)
-                if frames_available == 0:
-                    return None
-                
-                # Read the most recent frame
-                f.seek(-self.fft_size * 4, 2)  # Seek to last frame
-                data = np.frombuffer(f.read(self.fft_size * 4), dtype=np.float32)
-                
-                if len(data) == self.fft_size:
-                    return data
-                
         except Exception as e:
-            # File might be being written to, try again later
-            pass
+            self.stats['connection_status'] = f'Error: {str(e)[:20]}'
         
         return None
     
@@ -230,7 +220,7 @@ class WaterfallViewer:
     def draw_stats(self, stdscr, start_y, height, width):
         """Draw statistics"""
         stats_lines = [
-            f"Updates: {self.stats['updates']} | File Size: {self.stats['file_size']} bytes",
+            f"Updates: {self.stats['updates']} | Status: {self.stats['connection_status']}",
             f"Peak: {self.stats['peak_power']:.1f} dB @ {self.stats['peak_freq']/1e6:.2f} MHz",
             f"Average Power: {self.stats['avg_power']:.1f} dB",
             f"ADS-B (1090 MHz): {self.stats['adsb_power']:.1f} dB",
@@ -252,9 +242,9 @@ class WaterfallViewer:
         stdscr.addstr(height - 1, 0, controls[:width-1], curses.A_DIM)
     
     def data_updater(self):
-        """Background thread to read FFT data"""
+        """Background thread to fetch FFT data"""
         while self.running:
-            fft_data = self.read_fft_data()
+            fft_data = self.fetch_fft_data()
             if fft_data is not None:
                 processed_data = self.process_fft_data(fft_data)
                 if processed_data is not None:
