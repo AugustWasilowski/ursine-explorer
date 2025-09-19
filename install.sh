@@ -15,12 +15,26 @@ sudo apt install -y hackrf libhackrf-dev python3 python3-pip
 
 # Install dump1090-fa (FlightAware version with HackRF support)
 echo "Installing dump1090-fa..."
-sudo apt install -y git build-essential pkg-config libusb-1.0-0-dev
+sudo apt install -y git build-essential pkg-config libusb-1.0-0-dev libncurses-dev libncurses5-dev
+
+# Clean up any existing dump1090 build
+rm -rf /tmp/dump1090
+
 cd /tmp
+echo "Cloning dump1090 repository..."
 git clone https://github.com/flightaware/dump1090.git
 cd dump1090
-make
-sudo make install
+
+echo "Building dump1090..."
+if make; then
+    echo "Installing dump1090..."
+    sudo make install
+    echo "✅ dump1090 installed successfully"
+else
+    echo "❌ dump1090 build failed"
+    exit 1
+fi
+
 cd /
 rm -rf /tmp/dump1090
 
