@@ -14,5 +14,90 @@
     "alert_interval_sec": 300,
     "dump1090_path": "/usr/local/bin/dump1090",
     "watchdog_timeout_sec": 60,
-    "poll_interval_sec": 1
+    "poll_interval_sec": 1,
+    
+    "pymodes": {
+        "enabled": true,
+        "reference_position": {
+            "latitude": null,
+            "longitude": null
+        },
+        "cpr_settings": {
+            "global_position_timeout": 10,
+            "local_position_range_nm": 180,
+            "surface_position_timeout": 25
+        },
+        "message_validation": {
+            "enable_crc_check": true,
+            "enable_format_validation": true,
+            "enable_range_validation": true,
+            "max_message_age_sec": 60
+        },
+        "decoder_settings": {
+            "supported_message_types": ["DF4", "DF5", "DF17", "DF18", "DF20", "DF21"],
+            "enable_enhanced_decoding": true,
+            "decode_comm_b": true,
+            "decode_bds": true
+        }
+    },
+    
+    "message_sources": [
+        {
+            "name": "dump1090_primary",
+            "type": "dump1090",
+            "enabled": true,
+            "host": "localhost",
+            "port": 30005,
+            "format": "beast",
+            "reconnect_interval_sec": 5,
+            "max_reconnect_attempts": 10,
+            "buffer_size": 8192
+        }
+    ],
+    
+    "aircraft_tracking": {
+        "aircraft_timeout_sec": 300,
+        "position_timeout_sec": 60,
+        "cleanup_interval_sec": 30,
+        "max_aircraft_count": 10000,
+        "enable_data_validation": true,
+        "conflict_resolution": "newest_wins",
+        "track_surface_vehicles": true,
+        "minimum_message_count": 2
+    },
+    
+    "watchlist": {
+        "enabled": true,
+        "sources": ["target_icao_codes"],
+        "check_icao": true,
+        "check_callsign": true,
+        "case_sensitive": false,
+        "pattern_matching": false,
+        "alert_throttling": {
+            "enabled": true,
+            "min_interval_sec": 300,
+            "max_alerts_per_hour": 10,
+            "escalation_enabled": false
+        }
+    },
+    
+    "logging": {
+        "level": "INFO",
+        "enable_message_stats": true,
+        "enable_aircraft_events": true,
+        "enable_connection_events": true,
+        "enable_decode_errors": true,
+        "stats_interval_sec": 60,
+        "log_file": "adsb_receiver.log",
+        "max_log_size_mb": 100,
+        "backup_count": 5
+    },
+    
+    "performance": {
+        "message_batch_size": 100,
+        "processing_interval_ms": 100,
+        "memory_limit_mb": 512,
+        "enable_profiling": false,
+        "gc_interval_sec": 300
+    }
 }
