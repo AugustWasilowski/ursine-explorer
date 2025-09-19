@@ -1,6 +1,6 @@
 {
     "dump1090_host": "localhost",
-    "dump1090_port": 8080,
+    "dump1090_port": 30005,
     "receiver_control_port": 8081,
     "frequency": 1090000000,
     "lna_gain": 40,
