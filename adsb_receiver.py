@@ -609,7 +609,8 @@ class ADSBServer:
     def get_fft_data(self) -> list:
         """Get FFT data for waterfall viewer"""
         if hasattr(self, 'fft_history'):
-            return self.fft_history.copy()
+            # Convert numpy arrays to Python lists for JSON serialization
+            return [fft_data.tolist() for fft_data in self.fft_history]
         return []
     
     def data_updater(self):
