@@ -44,8 +44,8 @@ from pymodes_integration import PyModeSConfig, PyModeSDecode, MessageSourceManag
 
 # 1. Create configuration
 config = PyModeSConfig()
-config.reference_latitude = 40.7128   # Your location
-config.reference_longitude = -74.0060
+config.reference_latitude = 41.9481   # Your location
+config.reference_longitude = -87.6555
 
 # 2. Initialize decoder
 decoder = PyModeSDecode(config)

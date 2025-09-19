@@ -19,8 +19,8 @@
     "pymodes": {
         "enabled": true,
         "reference_position": {
-            "latitude": null,
-            "longitude": null
+            "latitude": 41.9481,
+            "longitude": -87.6555
         },
         "cpr_settings": {
             "global_position_timeout": 10,
