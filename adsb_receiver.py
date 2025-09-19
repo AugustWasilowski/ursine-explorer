@@ -106,7 +106,7 @@ class MeshtasticAlert:
                 timeout=1,
                 write_timeout=1
             )
-            logger.info(f"✅ Connected to Meshtastic on {self.port}")
+            logger.info(f"Connected to Meshtastic on {self.port}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to connect to Meshtastic: {e}")
@@ -180,27 +180,51 @@ class Dump1090Manager:
     def start(self) -> bool:
         """Start dump1090 process"""
         try:
-            # Build dump1090 command
-            cmd = [
-                self.config.get('dump1090_path', '/usr/bin/dump1090-fa'),
-                '--device-type', 'hackrf',
-                '--freq', str(self.config.get('frequency', 1090000000)),
-                '--net',
-                '--net-ro-port', '30005',
-                '--net-sbs-port', '30003',
-                '--net-http-port', str(self.config.get('dump1090_port', 8080))
-            ]
+            dump1090_path = self.config.get('dump1090_path', '/usr/bin/dump1090-fa')
             
-            # Add gain settings
-            if self.config.get('enable_hackrf_amp', True):
-                cmd.append('--enable-amp')
+            # Check if it's dump1090-mutability (different command line options)
+            if 'mutability' in dump1090_path:
+                # dump1090-mutability uses different options
+                cmd = [
+                    dump1090_path,
+                    '--device', 'hackrf',
+                    '--freq', str(self.config.get('frequency', 1090000000)),
+                    '--net',
+                    '--net-ro-port', '30005',
+                    '--net-sbs-port', '30003',
+                    '--net-http-port', str(self.config.get('dump1090_port', 8080))
+                ]
+                
+                # Add gain settings for mutability
+                if self.config.get('enable_hackrf_amp', True):
+                    cmd.append('--enable-amp')
+                
+                lna_gain = self.config.get('lna_gain', 40)
+                vga_gain = self.config.get('vga_gain', 20)
+                cmd.extend(['--lna-gain', str(lna_gain)])
+                cmd.extend(['--vga-gain', str(vga_gain)])
+            else:
+                # dump1090-fa options
+                cmd = [
+                    dump1090_path,
+                    '--device-type', 'hackrf',
+                    '--freq', str(self.config.get('frequency', 1090000000)),
+                    '--net',
+                    '--net-ro-port', '30005',
+                    '--net-sbs-port', '30003',
+                    '--net-http-port', str(self.config.get('dump1090_port', 8080))
+                ]
+                
+                # Add gain settings
+                if self.config.get('enable_hackrf_amp', True):
+                    cmd.append('--enable-amp')
+                
+                lna_gain = self.config.get('lna_gain', 40)
+                vga_gain = self.config.get('vga_gain', 20)
+                cmd.extend(['--lna-gain', str(lna_gain)])
+                cmd.extend(['--vga-gain', str(vga_gain)])
             
-            lna_gain = self.config.get('lna_gain', 40)
-            vga_gain = self.config.get('vga_gain', 20)
-            cmd.extend(['--lna-gain', str(lna_gain)])
-            cmd.extend(['--vga-gain', str(vga_gain)])
-            
-            logger.info(f"🚀 Starting dump1090: {' '.join(cmd)}")
+            logger.info(f"Starting dump1090: {' '.join(cmd)}")
             
             # Start process
             self.process = subprocess.Popen(
@@ -217,22 +241,22 @@ class Dump1090Manager:
             time.sleep(2)
             
             if self.process.poll() is None:
-                logger.info("✅ dump1090 started successfully")
+                logger.info("dump1090 started successfully")
                 return True
             else:
                 stdout, stderr = self.process.communicate()
-                logger.error(f"❌ dump1090 failed to start: {stderr.decode()}")
+                logger.error(f"dump1090 failed to start: {stderr.decode()}")
                 return False
-                
+            
         except Exception as e:
-            logger.error(f"❌ Failed to start dump1090: {e}")
+            logger.error(f"Failed to start dump1090: {e}")
             return False
     
     def stop(self):
         """Stop dump1090 process"""
         if self.process and self.running:
             try:
-                logger.info("🛑 Stopping dump1090...")
+                logger.info("Stopping dump1090...")
                 
                 # Send SIGTERM to process group
                 os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
@@ -246,10 +270,10 @@ class Dump1090Manager:
                     self.process.wait()
                 
                 self.running = False
-                logger.info("✅ dump1090 stopped")
+                logger.info("dump1090 stopped")
                 
             except Exception as e:
-                logger.error(f"⚠️ Error stopping dump1090: {e}")
+                logger.error(f"Error stopping dump1090: {e}")
             finally:
                 self.process = None
     
@@ -556,7 +580,7 @@ class ADSBServer:
                 
                 time.sleep(self.config.get('poll_interval_sec', 1))
                 
-            except Exception as e:
+        except Exception as e:
                 logger.error(f"❌ Data updater error: {e}")
                 time.sleep(5)
     
