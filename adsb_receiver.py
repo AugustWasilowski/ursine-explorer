@@ -536,11 +536,16 @@ class ADSBServer:
         for aircraft in self.aircraft.values():
             aircraft_list.append(aircraft.to_dict())
         
+        # Convert datetime objects to strings for JSON serialization
+        stats_copy = self.stats.copy()
+        if stats_copy.get('last_update'):
+            stats_copy['last_update'] = stats_copy['last_update'].isoformat()
+        
         return {
             "now": time.time(),
             "messages": self.stats['messages_total'],
             "aircraft": aircraft_list,
-            "stats": self.stats
+            "stats": stats_copy
         }
     
     def get_status(self) -> dict:
