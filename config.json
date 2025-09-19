@@ -2,7 +2,7 @@
     "dump1090_host": "localhost",
     "dump1090_port": 30005,
     "receiver_control_port": 8081,
-    "frequency": 1090000000,
+    "frequency": 1090100000,
     "lna_gain": 40,
     "vga_gain": 20,
     "enable_hackrf_amp": true,
