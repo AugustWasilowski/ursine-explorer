@@ -1211,31 +1211,44 @@ class ADSBDashboard:
                 # Update pyModeS and source stats every 5 seconds
                 stats_update_counter += 1
                 if stats_update_counter >= 5:
-                    try:
-                        # Try to update stats, but don't fail if any individual call fails
+                    # Run stats updates in background to prevent blocking main display
+                    def update_stats_background():
                         try:
-                            pymodes_data = self.fetch_pymodes_stats()
-                            if pymodes_data:
-                                self.update_pymodes_stats(pymodes_data)
-                        except Exception as e:
-                            self.log_error("pymodes_stats_error", f"Failed to fetch pyModeS stats: {str(e)}", "data_updater")
-                        
-                        try:
-                            source_data = self.fetch_source_stats()
-                            if source_data:
-                                self.update_source_stats(source_data)
-                        except Exception as e:
-                            self.log_error("source_stats_error", f"Failed to fetch source stats: {str(e)}", "data_updater")
-                        
-                        try:
-                            alert_data = self.fetch_alert_status()
-                            if alert_data:
-                                self.alert_status.update(alert_data)
-                        except Exception as e:
-                            self.log_error("alert_stats_error", f"Failed to fetch alert status: {str(e)}", "data_updater")
+                            # Try to update stats, but don't fail if any individual call fails
+                            try:
+                                pymodes_data = self.fetch_pymodes_stats()
+                                if pymodes_data and isinstance(pymodes_data, dict):
+                                    self.update_pymodes_stats(pymodes_data)
+                            except Exception as e:
+                                # Silently handle stats errors to prevent display disruption
+                                pass
                             
-                    except Exception as e:
-                        self.log_error("stats_update_error", f"General stats update error: {str(e)}", "data_updater")
+                            try:
+                                source_data = self.fetch_source_stats()
+                                if source_data and isinstance(source_data, dict):
+                                    self.update_source_stats(source_data)
+                            except Exception as e:
+                                # Silently handle stats errors to prevent display disruption
+                                pass
+                            
+                            try:
+                                alert_data = self.fetch_alert_status()
+                                if alert_data and isinstance(alert_data, dict):
+                                    # Only update specific fields to prevent overwriting
+                                    for key, value in alert_data.items():
+                                        if key in self.alert_status and value is not None:
+                                            self.alert_status[key] = value
+                            except Exception as e:
+                                # Silently handle stats errors to prevent display disruption
+                                pass
+                                
+                        except Exception as e:
+                            # Silently handle any remaining errors
+                            pass
+                    
+                    # Run stats update in background thread to prevent blocking
+                    stats_thread = threading.Thread(target=update_stats_background, daemon=True)
+                    stats_thread.start()
                     
                     stats_update_counter = 0
                 
