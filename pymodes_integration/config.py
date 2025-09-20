@@ -12,6 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import copy
 
+from .meshtastic_config import (
+    MeshtasticConfig,
+    ChannelConfig,
+    MQTTConfig,
+    create_meshtastic_config_from_dict
+)
+
 
 @dataclass
 class ReferencePosition:
@@ -130,6 +137,9 @@ class PerformanceConfig:
     gc_interval_sec: int = 300
 
 
+
+
+
 @dataclass
 class ADSBConfig:
     """Complete ADS-B receiver configuration."""
@@ -148,6 +158,7 @@ class ADSBConfig:
     alert_log_file: str = "alerts.log"
     alert_interval_sec: int = 300
     dump1090_path: str = "/usr/local/bin/dump1090"
+    start_dump1090: bool = True
     watchdog_timeout_sec: int = 60
     poll_interval_sec: int = 1
     
@@ -158,6 +169,9 @@ class ADSBConfig:
     watchlist: WatchlistConfig = field(default_factory=WatchlistConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+    
+    # Enhanced Meshtastic settings
+    meshtastic: Optional[MeshtasticConfig] = None
 
 
 class ConfigurationError(Exception):
@@ -235,8 +249,10 @@ class ConfigManager:
     
     def _needs_migration(self, config: Dict[str, Any]) -> bool:
         """Check if configuration needs migration to new format."""
-        # Check for presence of new pyModeS section
-        return "pymodes" not in config or "message_sources" not in config
+        # Check for presence of new sections
+        return ("pymodes" not in config or 
+                "message_sources" not in config or 
+                "meshtastic" not in config)
     
     def _migrate_config(self, old_config: Dict[str, Any]) -> Dict[str, Any]:
         """Migrate old configuration format to new format."""
@@ -337,6 +353,39 @@ class ConfigManager:
                 "gc_interval_sec": 300
             }
         
+        # Migrate Meshtastic settings to enhanced format
+        if "meshtastic" not in new_config:
+            new_config["meshtastic"] = {
+                # Preserve legacy settings for backward compatibility
+                "meshtastic_port": old_config.get("meshtastic_port", "/dev/ttyUSB0"),
+                "meshtastic_baud": old_config.get("meshtastic_baud", 115200),
+                
+                # Default enhanced settings
+                "channels": [
+                    {
+                        "name": "LongFast",
+                        "psk": None,
+                        "channel_number": 0,
+                        "uplink_enabled": True,
+                        "downlink_enabled": True
+                    }
+                ],
+                "default_channel": "LongFast",
+                "mqtt": None,
+                "connection_mode": "serial",  # Start with serial only for backward compatibility
+                "failover_enabled": True,
+                "connection_timeout": 10,
+                "retry_interval": 30,
+                "message_format": "standard",
+                "include_position": True,
+                "include_timestamp": True,
+                "max_message_length": 200,
+                "auto_detect_device": True,
+                "enable_encryption": True,
+                "log_all_messages": False,
+                "health_check_interval": 60
+            }
+        
         return new_config
     
     def _parse_config(self, config_dict: Dict[str, Any]) -> ADSBConfig:
@@ -349,7 +398,7 @@ class ConfigManager:
                           'frequency', 'lna_gain', 'vga_gain', 'enable_hackrf_amp',
                           'target_icao_codes', 'meshtastic_port', 'meshtastic_baud',
                           'log_alerts', 'alert_log_file', 'alert_interval_sec',
-                          'dump1090_path', 'watchdog_timeout_sec', 'poll_interval_sec']:
+                          'dump1090_path', 'start_dump1090', 'watchdog_timeout_sec', 'poll_interval_sec']:
             if field_name in config_dict:
                 setattr(config, field_name, config_dict[field_name])
         
@@ -386,6 +435,25 @@ class ConfigManager:
         
         if 'performance' in config_dict:
             config.performance = PerformanceConfig(**config_dict['performance'])
+        
+        # Parse enhanced Meshtastic config
+        if 'meshtastic' in config_dict:
+            config.meshtastic = create_meshtastic_config_from_dict(config_dict['meshtastic'])
+        else:
+            # Create default Meshtastic config if not present
+            config.meshtastic = create_meshtastic_config_from_dict({
+                "channels": [
+                    {
+                        "name": "LongFast",
+                        "psk": None,
+                        "channel_number": 0,
+                        "uplink_enabled": True,
+                        "downlink_enabled": True
+                    }
+                ],
+                "default_channel": "LongFast",
+                "connection_mode": "serial"
+            })
         
         return config
     
@@ -427,6 +495,8 @@ class ConfigManager:
         if config.performance.memory_limit_mb <= 0:
             errors.append("Memory limit must be positive")
         
+        # Meshtastic validation is handled by the MeshtasticConfig class itself
+        
         if errors:
             raise ConfigurationError("Configuration validation failed: " + "; ".join(errors))
     
@@ -446,6 +516,21 @@ class ConfigManager:
             )
         ]
         
+        # Add default Meshtastic configuration
+        config.meshtastic = create_meshtastic_config_from_dict({
+            "channels": [
+                {
+                    "name": "LongFast",
+                    "psk": None,
+                    "channel_number": 0,
+                    "uplink_enabled": True,
+                    "downlink_enabled": True
+                }
+            ],
+            "default_channel": "LongFast",
+            "connection_mode": "serial"  # Start with serial only for safety
+        })
+        
         return config
     
     def _config_to_dict(self, config: ADSBConfig) -> Dict[str, Any]:
@@ -458,7 +543,7 @@ class ConfigManager:
                           'frequency', 'lna_gain', 'vga_gain', 'enable_hackrf_amp',
                           'target_icao_codes', 'meshtastic_port', 'meshtastic_baud',
                           'log_alerts', 'alert_log_file', 'alert_interval_sec',
-                          'dump1090_path', 'watchdog_timeout_sec', 'poll_interval_sec']:
+                          'dump1090_path', 'start_dump1090', 'watchdog_timeout_sec', 'poll_interval_sec']:
             result[field_name] = getattr(config, field_name)
         
         # Convert complex objects to dicts (simplified)
@@ -549,6 +634,46 @@ class ConfigManager:
             'memory_limit_mb': config.performance.memory_limit_mb,
             'enable_profiling': config.performance.enable_profiling,
             'gc_interval_sec': config.performance.gc_interval_sec
+        }
+        
+        # Enhanced Meshtastic configuration
+        result['meshtastic'] = {
+            'meshtastic_port': config.meshtastic.meshtastic_port,
+            'meshtastic_baud': config.meshtastic.meshtastic_baud,
+            'channels': [
+                {
+                    'name': channel.name,
+                    'psk': channel.psk,
+                    'channel_number': channel.channel_number,
+                    'uplink_enabled': channel.uplink_enabled,
+                    'downlink_enabled': channel.downlink_enabled
+                }
+                for channel in config.meshtastic.channels
+            ],
+            'default_channel': config.meshtastic.default_channel,
+            'mqtt': {
+                'broker_url': config.meshtastic.mqtt.broker_url,
+                'port': config.meshtastic.mqtt.port,
+                'username': config.meshtastic.mqtt.username,
+                'password': config.meshtastic.mqtt.password,
+                'use_tls': config.meshtastic.mqtt.use_tls,
+                'client_id': config.meshtastic.mqtt.client_id,
+                'topic_prefix': config.meshtastic.mqtt.topic_prefix,
+                'qos': config.meshtastic.mqtt.qos,
+                'keepalive': config.meshtastic.mqtt.keepalive
+            } if config.meshtastic.mqtt is not None else None,
+            'connection_mode': config.meshtastic.connection_mode,
+            'failover_enabled': config.meshtastic.failover_enabled,
+            'connection_timeout': config.meshtastic.connection_timeout,
+            'retry_interval': config.meshtastic.retry_interval,
+            'message_format': config.meshtastic.message_format,
+            'include_position': config.meshtastic.include_position,
+            'include_timestamp': config.meshtastic.include_timestamp,
+            'max_message_length': config.meshtastic.max_message_length,
+            'auto_detect_device': config.meshtastic.auto_detect_device,
+            'enable_encryption': config.meshtastic.enable_encryption,
+            'log_all_messages': config.meshtastic.log_all_messages,
+            'health_check_interval': config.meshtastic.health_check_interval
         }
         
         return result

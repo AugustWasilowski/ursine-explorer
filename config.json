@@ -103,5 +103,32 @@
         "memory_limit_mb": 512,
         "enable_profiling": false,
         "gc_interval_sec": 300
+    },
+    "meshtastic": {
+        "meshtastic_port": "/dev/ttyUSB0",
+        "meshtastic_baud": 115200,
+        "channels": [
+            {
+                "name": "LongFast",
+                "psk": null,
+                "channel_number": 0,
+                "uplink_enabled": true,
+                "downlink_enabled": true
+            }
+        ],
+        "default_channel": "LongFast",
+        "mqtt": null,
+        "connection_mode": "serial",
+        "failover_enabled": true,
+        "connection_timeout": 10,
+        "retry_interval": 30,
+        "message_format": "standard",
+        "include_position": true,
+        "include_timestamp": true,
+        "max_message_length": 200,
+        "auto_detect_device": true,
+        "enable_encryption": true,
+        "log_all_messages": false,
+        "health_check_interval": 60
     }
 }

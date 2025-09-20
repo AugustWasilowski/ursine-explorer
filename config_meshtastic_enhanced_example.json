@@ -1,0 +1,158 @@
+{
+    "dump1090_host": "localhost",
+    "dump1090_port": 30005,
+    "receiver_control_port": 8081,
+    "frequency": 1090100000,
+    "lna_gain": 40,
+    "vga_gain": 20,
+    "enable_hackrf_amp": true,
+    "target_icao_codes": ["A12345", "B67890"],
+    "meshtastic_port": "/dev/ttyUSB0",
+    "meshtastic_baud": 115200,
+    "log_alerts": true,
+    "alert_log_file": "alerts.log",
+    "alert_interval_sec": 300,
+    "dump1090_path": "/usr/local/bin/dump1090",
+    "start_dump1090": true,
+    "watchdog_timeout_sec": 60,
+    "poll_interval_sec": 1,
+    "pymodes": {
+        "enabled": true,
+        "reference_position": {
+            "latitude": 41.9481,
+            "longitude": -87.6555
+        },
+        "cpr_settings": {
+            "global_position_timeout": 10,
+            "local_position_range_nm": 180,
+            "surface_position_timeout": 25
+        },
+        "message_validation": {
+            "enable_crc_check": true,
+            "enable_format_validation": true,
+            "enable_range_validation": true,
+            "max_message_age_sec": 60
+        },
+        "decoder_settings": {
+            "supported_message_types": [
+                "DF4",
+                "DF5",
+                "DF17",
+                "DF18",
+                "DF20",
+                "DF21"
+            ],
+            "enable_enhanced_decoding": true,
+            "decode_comm_b": true,
+            "decode_bds": true
+        }
+    },
+    "message_sources": [
+        {
+            "name": "dump1090_primary",
+            "type": "dump1090",
+            "enabled": true,
+            "host": "localhost",
+            "port": 30005,
+            "format": "beast",
+            "reconnect_interval_sec": 5,
+            "max_reconnect_attempts": 10,
+            "buffer_size": 8192
+        }
+    ],
+    "aircraft_tracking": {
+        "aircraft_timeout_sec": 300,
+        "position_timeout_sec": 60,
+        "cleanup_interval_sec": 30,
+        "max_aircraft_count": 10000,
+        "enable_data_validation": true,
+        "conflict_resolution": "newest_wins",
+        "track_surface_vehicles": true,
+        "minimum_message_count": 2
+    },
+    "watchlist": {
+        "enabled": true,
+        "sources": [
+            "target_icao_codes"
+        ],
+        "check_icao": true,
+        "check_callsign": true,
+        "case_sensitive": false,
+        "pattern_matching": false,
+        "alert_throttling": {
+            "enabled": true,
+            "min_interval_sec": 300,
+            "max_alerts_per_hour": 10,
+            "escalation_enabled": false
+        }
+    },
+    "logging": {
+        "level": "INFO",
+        "enable_message_stats": true,
+        "enable_aircraft_events": true,
+        "enable_connection_events": true,
+        "enable_decode_errors": true,
+        "stats_interval_sec": 60,
+        "log_file": "adsb_receiver.log",
+        "max_log_size_mb": 100,
+        "backup_count": 5
+    },
+    "performance": {
+        "message_batch_size": 100,
+        "processing_interval_ms": 100,
+        "memory_limit_mb": 512,
+        "enable_profiling": false,
+        "gc_interval_sec": 300
+    },
+    "meshtastic": {
+        "meshtastic_port": "/dev/ttyUSB0",
+        "meshtastic_baud": 115200,
+        "channels": [
+            {
+                "name": "LongFast",
+                "psk": null,
+                "channel_number": 0,
+                "uplink_enabled": true,
+                "downlink_enabled": true
+            },
+            {
+                "name": "SecureAlerts",
+                "psk": "HR6Eq+6gkccIdwYl3817GA==",
+                "channel_number": 1,
+                "uplink_enabled": true,
+                "downlink_enabled": true
+            },
+            {
+                "name": "EmergencyChannel",
+                "psk": "fWuIdEhCO75mMMLGD+vCWuoTMGbxYvOoYZIoyKkMX00=",
+                "channel_number": 2,
+                "uplink_enabled": true,
+                "downlink_enabled": true
+            }
+        ],
+        "default_channel": "SecureAlerts",
+        "mqtt": {
+            "broker_url": "mqtt.meshtastic.org",
+            "port": 1883,
+            "username": null,
+            "password": null,
+            "use_tls": false,
+            "client_id": "ursine_explorer_adsb",
+            "topic_prefix": "msh/US",
+            "qos": 0,
+            "keepalive": 60
+        },
+        "connection_mode": "dual",
+        "failover_enabled": true,
+        "connection_timeout": 10,
+        "retry_interval": 30,
+        "message_format": "standard",
+        "include_position": true,
+        "include_timestamp": true,
+        "max_message_length": 200,
+        "auto_detect_device": true,
+        "enable_encryption": true,
+        "log_all_messages": false,
+        "health_check_interval": 60
+    }
+}

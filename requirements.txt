@@ -12,3 +12,7 @@ pyModeS>=2.13.0
 numpy>=1.21.0
 requests>=2.25.0
 pyserial>=3.5
+
+# Enhanced Meshtastic Integration Dependencies
+paho-mqtt>=1.6.0
+cryptography>=3.4.8
