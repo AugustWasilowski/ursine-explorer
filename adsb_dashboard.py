@@ -928,8 +928,9 @@ class ADSBDashboard:
         
         if not self.waterfall_data:
             stdscr.addstr(start_y, 0, "FFT data not available - waterfall requires dump1090 with --write-json option", curses.A_DIM)
-            stdscr.addstr(start_y + 1, 0, "or integrated receiver FFT support. Press 'w' to disable waterfall.", curses.A_DIM)
-            return start_y + 3
+            stdscr.addstr(start_y + 1, 0, "Start dump1090 with: --write-json /tmp/adsb_json --write-json-every 1", curses.A_DIM)
+            stdscr.addstr(start_y + 2, 0, "Press 'w' to disable waterfall display.", curses.A_DIM)
+            return start_y + 4
         
         # Focus on ADS-B frequency range
         center_bin = len(self.waterfall_data[0]) // 2

@@ -186,7 +186,7 @@ class SystemManager:
                 '--device-type', 'hackrf',
                 '--freq', str(self.config.get('frequency', 1090000000)),
                 '--net',
-                '--net-ro-port', str(self.config.get('dump1090_port', 30005)),
+                '--net-bo-port', str(self.config.get('dump1090_port', 30005)),
                 '--net-sbs-port', '30003',
                 '--write-json', '/tmp/adsb_json',
                 '--write-json-every', '1'
