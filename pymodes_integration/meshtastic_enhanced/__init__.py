@@ -49,12 +49,21 @@ from .exceptions import (
 )
 from .channel_manager import ChannelManager
 from .encryption_handler import EncryptionHandler
-from .mqtt_interface import MeshtasticMQTTInterface, MQTTMessageHandler
+# Optional MQTT interface (requires paho-mqtt)
+try:
+    from .mqtt_interface import MeshtasticMQTTInterface, MQTTMessageHandler
+    _MQTT_AVAILABLE = True
+except ImportError:
+    _MQTT_AVAILABLE = False
+    MeshtasticMQTTInterface = None
+    MQTTMessageHandler = None
 from .meshtastic_manager import MeshtasticManager
 from .connection_manager import ConnectionManager, InterfacePriority
+from .diagnostics import MeshtasticDiagnostics, DiagnosticTest, PerformanceMetrics
 from . import utils
 
 __version__ = "1.0.0"
+# Build __all__ list dynamically based on available imports
 __all__ = [
     # Interfaces
     "MeshtasticInterface",
@@ -66,11 +75,14 @@ __all__ = [
     # Managers
     "ChannelManager",
     "EncryptionHandler",
-    "MeshtasticMQTTInterface",
-    "MQTTMessageHandler",
     "MeshtasticManager",
     "ConnectionManager",
     "InterfacePriority",
+    
+    # Diagnostics
+    "MeshtasticDiagnostics",
+    "DiagnosticTest",
+    "PerformanceMetrics",
     
     # Data Classes
     "ChannelConfig", 
@@ -99,3 +111,7 @@ __all__ = [
     # Utils module
     "utils"
 ]
+
+# Add MQTT components if available
+if _MQTT_AVAILABLE:
+    __all__.extend(["MeshtasticMQTTInterface", "MQTTMessageHandler"])

@@ -3,6 +3,7 @@ Enhanced Watchlist Monitor Module
 
 Provides improved watchlist monitoring with better pattern matching,
 multiple watchlist types, and real-time updates without restart.
+Enhanced with support for the new MeshtasticManager integration.
 """
 
 import logging
@@ -116,20 +117,28 @@ class WatchlistEntry:
 class WatchlistMonitor:
     """
     Enhanced watchlist monitoring with improved pattern matching
-    and support for multiple watchlist types
+    and support for multiple watchlist types.
+    
+    Now supports integration with enhanced MeshtasticManager for
+    channel-based alert routing and delivery confirmation.
     """
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, meshtastic_manager=None):
         """
         Initialize watchlist monitor
         
         Args:
             config_path: Path to watchlist configuration file
+            meshtastic_manager: Optional MeshtasticManager instance for alerts
         """
         self.entries: Dict[str, WatchlistEntry] = {}
         self.config_path = config_path
         self.last_config_check = datetime.now()
         self.config_check_interval = 30  # Check for config changes every 30 seconds
+        
+        # Enhanced Meshtastic integration
+        self.meshtastic_manager = meshtastic_manager
+        self._channel_mapping: Dict[int, str] = {}  # Priority to channel mapping
         
         # Thread safety
         self._lock = threading.RLock()
@@ -141,7 +150,10 @@ class WatchlistMonitor:
             'matches_by_type': {wt.value: 0 for wt in WatchlistType},
             'matches_by_priority': {1: 0, 2: 0, 3: 0, 4: 0},
             'last_match_time': None,
-            'config_reloads': 0
+            'config_reloads': 0,
+            'meshtastic_alerts_sent': 0,
+            'meshtastic_alerts_failed': 0,
+            'alerts_by_channel': {}
         }
         
         # Callbacks for match events
@@ -151,7 +163,52 @@ class WatchlistMonitor:
         if config_path and os.path.exists(config_path):
             self.load_watchlist_config(config_path)
         
+        # Set up default channel mapping
+        self._setup_default_channel_mapping()
+        
         logger.info(f"WatchlistMonitor initialized with {len(self.entries)} entries")
+    
+    def set_meshtastic_manager(self, meshtastic_manager) -> None:
+        """
+        Set or update the MeshtasticManager instance
+        
+        Args:
+            meshtastic_manager: MeshtasticManager instance for sending alerts
+        """
+        self.meshtastic_manager = meshtastic_manager
+        logger.info("MeshtasticManager updated for watchlist monitor")
+    
+    def _setup_default_channel_mapping(self) -> None:
+        """Set up default priority to channel mapping"""
+        self._channel_mapping = {
+            1: "LongFast",      # Low priority -> default channel
+            2: "LongFast",      # Medium priority -> default channel  
+            3: "SecureAlerts",  # High priority -> secure channel if available
+            4: "SecureAlerts"   # Critical priority -> secure channel if available
+        }
+    
+    def configure_channel_mapping(self, priority_to_channel: Dict[int, str]) -> None:
+        """
+        Configure mapping from watchlist entry priority to Meshtastic channel
+        
+        Args:
+            priority_to_channel: Dictionary mapping priority levels (1-4) to channel names
+        """
+        with self._lock:
+            self._channel_mapping.update(priority_to_channel)
+            logger.info(f"Updated channel mapping: {self._channel_mapping}")
+    
+    def get_channel_for_priority(self, priority: int) -> str:
+        """
+        Get the appropriate channel for a given priority level
+        
+        Args:
+            priority: Priority level (1-4)
+            
+        Returns:
+            Channel name to use for this priority
+        """
+        return self._channel_mapping.get(priority, "LongFast")
     
     def add_entry(self, entry_id: str, entry: WatchlistEntry) -> None:
         """
@@ -244,6 +301,23 @@ class WatchlistMonitor:
                     # Mark aircraft as watchlist
                     aircraft.is_watchlist = True
                     
+                    # Send enhanced Meshtastic alert if manager is available
+                    if self.meshtastic_manager:
+                        try:
+                            alert_type = self._determine_alert_type(entry, aircraft)
+                            success = self._send_enhanced_meshtastic_alert(aircraft, entry, alert_type)
+                            
+                            if success:
+                                self.stats['meshtastic_alerts_sent'] += 1
+                                channel = self.get_channel_for_priority(entry.priority)
+                                self.stats['alerts_by_channel'][channel] = self.stats['alerts_by_channel'].get(channel, 0) + 1
+                            else:
+                                self.stats['meshtastic_alerts_failed'] += 1
+                                
+                        except Exception as e:
+                            logger.error(f"Error sending enhanced Meshtastic alert: {e}")
+                            self.stats['meshtastic_alerts_failed'] += 1
+                    
                     # Call registered callbacks
                     for callback in self.match_callbacks:
                         try:
@@ -255,6 +329,146 @@ class WatchlistMonitor:
                               f"({entry.entry_type.value}: {entry.value}, priority: {entry.priority})")
         
         return matches
+    
+    def _determine_alert_type(self, entry: WatchlistEntry, aircraft: EnhancedAircraft) -> str:
+        """
+        Determine the alert type based on watchlist entry and aircraft data
+        
+        Args:
+            entry: Matched watchlist entry
+            aircraft: Aircraft that matched
+            
+        Returns:
+            Alert type string
+        """
+        # Determine alert type based on priority and entry type
+        if entry.priority >= 4:
+            return "critical_watchlist"
+        elif entry.priority >= 3:
+            return "high_priority_watchlist"
+        elif entry.entry_type == WatchlistType.PATTERN:
+            return "pattern_watchlist"
+        elif entry.entry_type == WatchlistType.RANGE:
+            return "range_watchlist"
+        else:
+            return "watchlist"
+    
+    def _send_enhanced_meshtastic_alert(self, aircraft: EnhancedAircraft, entry: WatchlistEntry, alert_type: str) -> bool:
+        """
+        Send alert using enhanced MeshtasticManager
+        
+        Args:
+            aircraft: Aircraft triggering the alert
+            entry: Matched watchlist entry
+            alert_type: Type of alert to send
+            
+        Returns:
+            True if alert sent successfully, False otherwise
+        """
+        if not self.meshtastic_manager:
+            logger.warning("No MeshtasticManager available for sending alerts")
+            return False
+        
+        try:
+            # Create enhanced aircraft object with additional metadata
+            enhanced_aircraft = self._prepare_aircraft_for_alert(aircraft, entry)
+            
+            # Send alert through MeshtasticManager
+            success = self.meshtastic_manager.send_alert(enhanced_aircraft, alert_type)
+            
+            if success:
+                logger.info(f"Enhanced Meshtastic alert sent for {aircraft.icao} "
+                          f"(type: {alert_type}, priority: {entry.priority})")
+            else:
+                logger.warning(f"Failed to send enhanced Meshtastic alert for {aircraft.icao}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced Meshtastic alert sending: {e}")
+            return False
+    
+    def _prepare_aircraft_for_alert(self, aircraft: EnhancedAircraft, entry: WatchlistEntry) -> EnhancedAircraft:
+        """
+        Prepare aircraft object with additional metadata for alert
+        
+        Args:
+            aircraft: Original aircraft object
+            entry: Matched watchlist entry
+            
+        Returns:
+            Aircraft object with enhanced metadata
+        """
+        # Create a copy to avoid modifying the original
+        alert_aircraft = aircraft
+        
+        # Add watchlist-specific metadata
+        if not hasattr(alert_aircraft, 'watchlist_metadata'):
+            alert_aircraft.watchlist_metadata = {}
+        
+        alert_aircraft.watchlist_metadata.update({
+            'matched_entry_id': entry.value,
+            'matched_entry_type': entry.entry_type.value,
+            'matched_entry_description': entry.description,
+            'priority': entry.priority,
+            'match_timestamp': datetime.now().isoformat(),
+            'match_count': entry.match_count
+        })
+        
+        return alert_aircraft
+    
+    def send_test_alert(self, test_message: str = "Watchlist test alert") -> bool:
+        """
+        Send a test alert through the enhanced Meshtastic system
+        
+        Args:
+            test_message: Message to send for testing
+            
+        Returns:
+            True if test alert sent successfully
+        """
+        if not self.meshtastic_manager:
+            logger.error("No MeshtasticManager available for test alert")
+            return False
+        
+        try:
+            # Create a dummy aircraft for testing
+            from .aircraft import EnhancedAircraft
+            now = datetime.now()
+            test_aircraft = EnhancedAircraft(
+                icao="TEST01",
+                first_seen=now,
+                last_seen=now,
+                callsign="TEST",
+                latitude=0.0,
+                longitude=0.0,
+                altitude_baro=10000,
+                ground_speed=250,
+                track_angle=90
+            )
+            
+            # Add test metadata
+            test_aircraft.watchlist_metadata = {
+                'test_alert': True,
+                'message': test_message,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            success = self.meshtastic_manager.send_alert(test_aircraft, "test")
+            
+            if success:
+                logger.info("Test alert sent successfully")
+                self.stats['meshtastic_alerts_sent'] += 1
+            else:
+                logger.warning("Test alert failed")
+                self.stats['meshtastic_alerts_failed'] += 1
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error sending test alert: {e}")
+            self.stats['meshtastic_alerts_failed'] += 1
+            return False
     
     def add_match_callback(self, callback: Callable[[EnhancedAircraft, WatchlistEntry], None]) -> None:
         """
@@ -471,9 +685,22 @@ class WatchlistMonitor:
                 'entries_by_priority': {
                     priority: len([e for e in self.entries.values() if e.priority == priority])
                     for priority in [1, 2, 3, 4]
-                }
+                },
+                'meshtastic_manager_available': self.meshtastic_manager is not None,
+                'channel_mapping': self._channel_mapping.copy(),
+                'meshtastic_connection_status': self._get_meshtastic_status()
             })
             return stats
+    
+    def _get_meshtastic_status(self) -> Dict[str, Any]:
+        """Get current Meshtastic connection status"""
+        if not self.meshtastic_manager:
+            return {'available': False, 'error': 'No MeshtasticManager configured'}
+        
+        try:
+            return self.meshtastic_manager.get_connection_status()
+        except Exception as e:
+            return {'available': False, 'error': str(e)}
     
     def reset_statistics(self) -> None:
         """Reset all statistics counters"""
@@ -484,7 +711,10 @@ class WatchlistMonitor:
                 'matches_by_type': {wt.value: 0 for wt in WatchlistType},
                 'matches_by_priority': {1: 0, 2: 0, 3: 0, 4: 0},
                 'last_match_time': None,
-                'config_reloads': 0
+                'config_reloads': 0,
+                'meshtastic_alerts_sent': 0,
+                'meshtastic_alerts_failed': 0,
+                'alerts_by_channel': {}
             }
             logger.info("Watchlist monitor statistics reset")
     

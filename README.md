@@ -9,6 +9,7 @@ A comprehensive ADS-B monitoring system powered by pyModeS that integrates dump1
 - **Multi-source data input** supporting dump1090, network streams, and various formats
 - **Robust message validation** with CRC checking and error recovery
 - **Enhanced aircraft tracking** with velocity, heading, and navigation accuracy data
+- **Enhanced Meshtastic integration** with encrypted channels, MQTT connectivity, and dual-mode operation
 - **Watchlist alerts** via Meshtastic LoRa mesh networking with intelligent throttling
 - **Live terminal dashboard** with aircraft tracking and system status
 - **Waterfall spectrum viewer** for frequency analysis
@@ -94,6 +95,35 @@ The system now uses pyModeS (>=2.13.0) for enhanced ADS-B message decoding. This
    - `meshtastic_port`: Serial port for Meshtastic device (e.g., `"/dev/ttyUSB0"`)
    - `frequency`: ADS-B frequency (default: `1090100000` Hz)
    - `lna_gain`/`vga_gain`: HackRF gain settings
+
+2. **Enhanced Meshtastic configuration:**
+   ```json
+   "meshtastic": {
+       "meshtastic_port": "/dev/ttyUSB0",
+       "meshtastic_baud": 115200,
+       "channels": [
+           {
+               "name": "LongFast",
+               "psk": null,
+               "channel_number": 0
+           },
+           {
+               "name": "SecureAlerts",
+               "psk": "your_base64_psk_here",
+               "channel_number": 1
+           }
+       ],
+       "default_channel": "SecureAlerts",
+       "connection_mode": "dual",
+       "mqtt": {
+           "broker_url": "mqtt.meshtastic.org",
+           "port": 1883,
+           "topic_prefix": "msh/US"
+       },
+       "enable_encryption": true,
+       "message_format": "standard"
+   }
+   ```
 
 2. **pyModeS-specific settings:**
    ```json
@@ -195,6 +225,23 @@ The system now uses pyModeS (>=2.13.0) for enhanced ADS-B message decoding. This
 | `aircraft_tracking.max_aircraft_count` | Maximum tracked aircraft | `10000` |
 | `aircraft_tracking.enable_data_validation` | Enable data validation | `true` |
 | `aircraft_tracking.conflict_resolution` | Conflict resolution strategy | `"newest_wins"` |
+
+### Enhanced Meshtastic Settings
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `meshtastic.channels` | Array of channel configurations | `[]` |
+| `meshtastic.default_channel` | Default channel for alerts | `"LongFast"` |
+| `meshtastic.connection_mode` | Connection mode: "serial", "mqtt", "dual" | `"dual"` |
+| `meshtastic.failover_enabled` | Enable automatic failover | `true` |
+| `meshtastic.enable_encryption` | Enable PSK encryption | `true` |
+| `meshtastic.message_format` | Message format: "standard", "compact", "json" | `"standard"` |
+| `meshtastic.mqtt.broker_url` | MQTT broker URL | `"mqtt.meshtastic.org"` |
+| `meshtastic.mqtt.port` | MQTT broker port | `1883` |
+| `meshtastic.mqtt.use_tls` | Enable TLS for MQTT | `false` |
+| `meshtastic.mqtt.topic_prefix` | MQTT topic prefix | `"msh/US"` |
+| `meshtastic.auto_detect_device` | Auto-detect Meshtastic devices | `true` |
+| `meshtastic.health_check_interval` | Health check interval (seconds) | `60` |
 
 ## System Components
 
@@ -339,18 +386,42 @@ curl http://localhost:8080/data/aircraft.json
 curl http://localhost:8080/data/fft.json
 ```
 
-## Alert System
+## Enhanced Alert System
 
 When a watchlist aircraft is detected:
-1. **Meshtastic alert** sent via LoRa mesh
-2. **Log entry** written to `alerts.log`
-3. **Dashboard highlight** shows aircraft in green
-4. **Cooldown period** prevents spam (default: 5 minutes)
+1. **Enhanced Meshtastic alerts** sent via encrypted channels and/or MQTT
+2. **Multi-interface delivery** with automatic failover between serial and MQTT
+3. **Delivery confirmation** and retry logic for reliable message transmission
+4. **Log entry** written to `alerts.log` with delivery status
+5. **Dashboard highlight** shows aircraft in green
+6. **Intelligent throttling** prevents spam (default: 5 minutes per aircraft)
 
-Alert format:
+### Alert Formats
+
+**Standard format:**
 ```
-ALERT: Watchlist aircraft A12345 (UAL123) overhead at 35000 ft
+ALERT: N12345 (UAL123) WATCHLIST 
+Pos: 40.7128,-74.0060 Alt: 35000ft
+Speed: 450kts Hdg: 090° 
+Time: 2024-01-15 14:30:25Z
 ```
+
+**Compact format:**
+```
+ALERT: N12345 WATCHLIST 40.71,-74.01 35k 450kt 090°
+```
+
+**JSON format:**
+```json
+{"icao":"N12345","callsign":"UAL123","alert":"WATCHLIST","lat":40.7128,"lon":-74.0060,"alt":35000,"speed":450,"heading":90,"time":"2024-01-15T14:30:25Z"}
+```
+
+### Connection Modes
+
+- **Serial Mode**: Direct USB connection to Meshtastic device
+- **MQTT Mode**: Network connection via MQTT broker
+- **Dual Mode**: Both serial and MQTT with automatic failover
+- **Encrypted Channels**: PSK-based encryption for secure communication
 
 ## Dashboard Controls
 
@@ -495,12 +566,16 @@ netstat -an | grep 30005
 
 ### Alert System Issues
 
-**Meshtastic alerts not working:**
+**Enhanced Meshtastic alerts not working:**
 - Verify serial port: `ls /dev/ttyUSB*`
 - Check baud rate settings match device
 - Test Meshtastic device independently
 - Review alert logs: `tail -f alerts.log`
 - Check alert throttling settings
+- **For encrypted channels**: Verify PSK configuration matches devices
+- **For MQTT mode**: Test broker connectivity: `mosquitto_sub -h mqtt.meshtastic.org -t "msh/US/+/+/+/+"`
+- **For dual mode**: Check failover logs for interface switching
+- **Channel configuration**: Verify channel numbers and names match device settings
 
 **Watchlist not triggering:**
 - Verify ICAO codes are correct (uppercase, no spaces)
@@ -577,6 +652,23 @@ If you encounter issues not covered here:
    - Complete error messages from logs
    - Configuration file (remove sensitive data)
    - Steps to reproduce the problem
+
+## Enhanced Meshtastic Documentation
+
+For detailed information about the enhanced Meshtastic features:
+
+- **[Enhanced Meshtastic Configuration Guide](ENHANCED_MESHTASTIC_CONFIG_GUIDE.md)** - Complete setup and configuration guide
+- **[Meshtastic Configuration Examples](MESHTASTIC_CONFIG_EXAMPLES.md)** - Ready-to-use configuration examples for different scenarios
+- **[Meshtastic Migration Guide](MESHTASTIC_MIGRATION_GUIDE.md)** - Step-by-step migration from legacy configurations
+- **[Enhanced Meshtastic API Documentation](ENHANCED_MESHTASTIC_API.md)** - Complete API reference for developers
+
+### Quick Links
+
+- **Encrypted Channels**: See [Configuration Guide](ENHANCED_MESHTASTIC_CONFIG_GUIDE.md#channel-configuration) for PSK setup
+- **MQTT Integration**: See [MQTT Setup](ENHANCED_MESHTASTIC_CONFIG_GUIDE.md#mqtt-broker-setup) for broker configuration
+- **Dual-Mode Operation**: See [Connection Modes](ENHANCED_MESHTASTIC_CONFIG_GUIDE.md#connection-modes) for serial + MQTT
+- **Troubleshooting**: See [Troubleshooting Guide](ENHANCED_MESHTASTIC_CONFIG_GUIDE.md#troubleshooting-guide) for common issues
+- **Migration**: See [Migration Guide](MESHTASTIC_MIGRATION_GUIDE.md) for upgrading existing setups
 
 ## License
 

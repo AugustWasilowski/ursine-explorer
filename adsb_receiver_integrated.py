@@ -21,6 +21,16 @@ from adsb_receiver import (
     RateLimiter, APILogger, Aircraft as LegacyAircraft
 )
 
+# Import enhanced Meshtastic components
+try:
+    from pymodes_integration.meshtastic_enhanced.meshtastic_manager import MeshtasticManager
+    from pymodes_integration.meshtastic_enhanced.data_classes import MeshtasticConfig
+    from pymodes_integration.watchlist_monitor import WatchlistMonitor
+    ENHANCED_MESHTASTIC_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Enhanced Meshtastic not available: {e}")
+    ENHANCED_MESHTASTIC_AVAILABLE = False
+
 # Import pyModeS integration components
 from pymodes_integration import (
     PyModeSConfig, PyModeSDecode, MessageSourceManager, 
@@ -79,6 +89,11 @@ class IntegratedADSBServer:
         # Legacy components for backward compatibility
         self.meshtastic = None
         self.dump1090_manager = None
+        
+        # Enhanced Meshtastic components
+        self.enhanced_meshtastic_manager: Optional[MeshtasticManager] = None
+        self.watchlist_monitor: Optional[WatchlistMonitor] = None
+        self.enhanced_meshtastic_enabled = False
         
         # Aircraft tracking (unified)
         self.aircraft: Dict[str, EnhancedAircraft] = {}
@@ -314,16 +329,47 @@ class IntegratedADSBServer:
         # Initialize watchlist
         self.update_watchlist()
         
-        # Initialize Meshtastic if configured
-        if self.config.get('meshtastic_port'):
+        # Initialize enhanced Meshtastic if available and configured
+        if ENHANCED_MESHTASTIC_AVAILABLE and self.config.get('meshtastic', {}).get('meshtastic_port'):
+            try:
+                logger.info("Initializing enhanced Meshtastic system...")
+                
+                # Create MeshtasticConfig from configuration
+                meshtastic_config = self.config.get('meshtastic', {})
+                config = MeshtasticConfig.from_dict(meshtastic_config)
+                
+                # Initialize MeshtasticManager
+                self.enhanced_meshtastic_manager = MeshtasticManager(config)
+                
+                if self.enhanced_meshtastic_manager.initialize():
+                    self.enhanced_meshtastic_enabled = True
+                    logger.info("Enhanced Meshtastic system initialized successfully")
+                    
+                    # Initialize enhanced watchlist monitor
+                    self.watchlist_monitor = WatchlistMonitor(
+                        meshtastic_manager=self.enhanced_meshtastic_manager
+                    )
+                    logger.info("Enhanced watchlist monitor initialized")
+                    
+                else:
+                    logger.error("Failed to initialize enhanced Meshtastic system")
+                    self.enhanced_meshtastic_manager = None
+                    
+            except Exception as e:
+                logger.error(f"Error initializing enhanced Meshtastic: {e}")
+                self.enhanced_meshtastic_manager = None
+                self.enhanced_meshtastic_enabled = False
+        
+        # Fallback to legacy Meshtastic if enhanced not available
+        elif self.config.get('meshtastic_port'):
             try:
                 self.meshtastic = MeshtasticAlert(
                     self.config['meshtastic_port'],
                     self.config.get('meshtastic_baud', 115200)
                 )
-                logger.info("Meshtastic alert system initialized")
+                logger.info("Legacy Meshtastic alert system initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize Meshtastic: {e}")
+                logger.error(f"Failed to initialize legacy Meshtastic: {e}")
                 self.meshtastic = None
         
         # Initialize dump1090 manager for backward compatibility
@@ -412,12 +458,15 @@ class IntegratedADSBServer:
             # Start message collection
             self.message_source_manager.start_collection()
             
-            # Connect Meshtastic if available
-            if self.meshtastic:
+            # Enhanced Meshtastic is already initialized and connected
+            if self.enhanced_meshtastic_enabled:
+                logger.info("Enhanced Meshtastic system ready")
+            # Connect legacy Meshtastic if available
+            elif self.meshtastic:
                 if self.meshtastic.connect():
-                    logger.info("Meshtastic connected successfully")
+                    logger.info("Legacy Meshtastic connected successfully")
                 else:
-                    logger.warning("Failed to connect to Meshtastic")
+                    logger.warning("Failed to connect to legacy Meshtastic")
             
             # Start dump1090 if configured
             if self.dump1090_manager and self.config.get('start_dump1090', False):
@@ -480,13 +529,21 @@ class IntegratedADSBServer:
             except Exception as e:
                 logger.error(f"Error stopping dump1090: {e}")
         
-        # Disconnect Meshtastic
-        if self.meshtastic:
+        # Shutdown enhanced Meshtastic
+        if self.enhanced_meshtastic_manager:
+            try:
+                self.enhanced_meshtastic_manager.shutdown()
+                logger.info("Enhanced Meshtastic system shutdown")
+            except Exception as e:
+                logger.error(f"Error shutting down enhanced Meshtastic: {e}")
+        
+        # Disconnect legacy Meshtastic
+        elif self.meshtastic:
             try:
                 self.meshtastic.disconnect()
-                logger.info("Meshtastic disconnected")
+                logger.info("Legacy Meshtastic disconnected")
             except Exception as e:
-                logger.error(f"Error disconnecting Meshtastic: {e}")
+                logger.error(f"Error disconnecting legacy Meshtastic: {e}")
         
         # Wait for threads to finish
         if self.processing_thread and self.processing_thread.is_alive():
@@ -661,6 +718,18 @@ class IntegratedADSBServer:
     
     def _check_watchlist(self, updated_aircraft: Dict[str, EnhancedAircraft]):
         """Check updated aircraft against watchlist"""
+        # Use enhanced watchlist monitor if available
+        if self.enhanced_meshtastic_enabled and self.watchlist_monitor:
+            for aircraft in updated_aircraft.values():
+                try:
+                    matches = self.watchlist_monitor.check_aircraft(aircraft)
+                    if matches:
+                        logger.info(f"Enhanced watchlist matches for {aircraft.icao}: {len(matches)} entries")
+                except Exception as e:
+                    logger.error(f"Error in enhanced watchlist check: {e}")
+            return
+        
+        # Fallback to legacy watchlist checking
         if not self.watchlist or not self.meshtastic:
             return
         
@@ -729,6 +798,18 @@ class IntegratedADSBServer:
         source_stats = self.message_source_manager.get_statistics()
         self.stats['sources_connected'] = source_stats.get('sources_connected', 0)
     
+    def _get_meshtastic_connection_status(self) -> bool:
+        """Get current Meshtastic connection status"""
+        if self.enhanced_meshtastic_enabled and self.enhanced_meshtastic_manager:
+            try:
+                status = self.enhanced_meshtastic_manager.get_connection_status()
+                return status.get('initialized', False)
+            except Exception:
+                return False
+        elif self.meshtastic:
+            return self.meshtastic.serial_conn is not None
+        return False
+    
     # API methods for HTTP server compatibility
     def get_aircraft_data(self) -> dict:
         """Get aircraft data in legacy format for API compatibility"""
@@ -785,7 +866,8 @@ class IntegratedADSBServer:
             'sources': self.message_source_manager.get_statistics(),
             'aircraft_count': len(self.aircraft),
             'watchlist_size': len(self.watchlist),
-            'meshtastic_connected': self.meshtastic.serial_conn is not None if self.meshtastic else False
+            'meshtastic_connected': self._get_meshtastic_connection_status(),
+            'enhanced_meshtastic_enabled': self.enhanced_meshtastic_enabled
         }
     
     def get_processing_stats(self) -> dict:
@@ -890,6 +972,13 @@ def signal_handler(signum, frame):
 
 def main():
     """Main entry point"""
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Ursine Explorer ADS-B Receiver (Integrated)')
+    parser.add_argument('--config', '-c', default='config.json', help='Configuration file path')
+    args = parser.parse_args()
+    
     logger.info("Starting Ursine Explorer ADS-B Receiver (Integrated)")
     
     # Set up signal handlers
@@ -897,8 +986,8 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
-        # Create and start server
-        server = IntegratedADSBServer()
+        # Create and start server with specified config
+        server = IntegratedADSBServer(args.config)
         signal_handler.server = server  # Store reference for signal handler
         
         server.start()

@@ -16,6 +16,15 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 import argparse
 
+# Import enhanced Meshtastic components
+try:
+    from pymodes_integration.meshtastic_enhanced.meshtastic_manager import MeshtasticManager
+    from pymodes_integration.meshtastic_enhanced.data_classes import MeshtasticConfig
+    ENHANCED_MESHTASTIC_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Enhanced Meshtastic not available: {e}")
+    ENHANCED_MESHTASTIC_AVAILABLE = False
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -38,12 +47,17 @@ class SystemManager:
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
         
+        # Enhanced Meshtastic integration
+        self.meshtastic_manager: Optional[MeshtasticManager] = None
+        self.meshtastic_initialized = False
+        
         # System status
         self.status = {
             'start_time': None,
             'receiver_running': False,
             'dashboard_running': False,
             'dump1090_running': False,
+            'meshtastic_running': False,
             'last_health_check': None,
             'restart_count': 0,
             'error_count': 0
@@ -69,6 +83,12 @@ class SystemManager:
         required_modules = [
             'pyModeS', 'numpy', 'requests', 'serial', 'curses'
         ]
+        
+        # Add enhanced Meshtastic dependencies if available
+        if ENHANCED_MESHTASTIC_AVAILABLE:
+            required_modules.extend(['paho.mqtt.client', 'cryptography'])
+        else:
+            logger.warning("Enhanced Meshtastic features not available - some dependencies missing")
         
         missing_modules = []
         for module in required_modules:
@@ -114,12 +134,71 @@ class SystemManager:
         logger.info("Dependency check completed")
         return True
     
+    def initialize_enhanced_meshtastic(self) -> bool:
+        """Initialize enhanced Meshtastic system if available and configured"""
+        if not ENHANCED_MESHTASTIC_AVAILABLE:
+            logger.info("Enhanced Meshtastic not available, skipping initialization")
+            return True  # Not an error if not available
+        
+        # Check if Meshtastic is configured
+        meshtastic_config = self.config.get('meshtastic', {})
+        if not meshtastic_config or not meshtastic_config.get('meshtastic_port'):
+            logger.info("Meshtastic not configured, skipping initialization")
+            return True
+        
+        try:
+            logger.info("Initializing enhanced Meshtastic system...")
+            
+            # Create MeshtasticConfig from configuration
+            config = MeshtasticConfig.from_dict(meshtastic_config)
+            
+            # Initialize MeshtasticManager
+            self.meshtastic_manager = MeshtasticManager(config)
+            
+            # Initialize the manager
+            if self.meshtastic_manager.initialize():
+                self.meshtastic_initialized = True
+                self.status['meshtastic_running'] = True
+                logger.info("Enhanced Meshtastic system initialized successfully")
+                
+                # Test connectivity
+                connectivity_status = self.meshtastic_manager.test_connectivity()
+                logger.info(f"Meshtastic connectivity test: {connectivity_status}")
+                
+                return True
+            else:
+                logger.error("Failed to initialize enhanced Meshtastic system")
+                self.meshtastic_manager = None
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error initializing enhanced Meshtastic: {e}")
+            self.meshtastic_manager = None
+            return False
+    
+    def shutdown_enhanced_meshtastic(self) -> None:
+        """Gracefully shutdown enhanced Meshtastic system"""
+        if self.meshtastic_manager:
+            try:
+                logger.info("Shutting down enhanced Meshtastic system...")
+                self.meshtastic_manager.shutdown()
+                self.meshtastic_manager = None
+                self.meshtastic_initialized = False
+                self.status['meshtastic_running'] = False
+                logger.info("Enhanced Meshtastic system shutdown completed")
+            except Exception as e:
+                logger.error(f"Error shutting down enhanced Meshtastic: {e}")
+    
     def start_receiver(self) -> bool:
         """Start the integrated ADS-B receiver"""
         logger.info("Starting integrated ADS-B receiver...")
         
         try:
             cmd = [sys.executable, 'adsb_receiver_integrated.py']
+            
+            # Pass config file path to receiver so it can initialize its own enhanced Meshtastic
+            if self.config_path != "config.json":
+                cmd.extend(['--config', self.config_path])
             
             process = subprocess.Popen(
                 cmd,
@@ -252,6 +331,9 @@ class SystemManager:
         """Stop all processes"""
         logger.info("Stopping all processes...")
         
+        # Stop enhanced Meshtastic first (graceful shutdown)
+        self.shutdown_enhanced_meshtastic()
+        
         # Stop in reverse order
         for name in ['dashboard', 'receiver', 'dump1090']:
             self.stop_process(name)
@@ -318,6 +400,23 @@ class SystemManager:
                             logger.error(f"Failed to restart {name}")
                             self.status['error_count'] += 1
                 
+                # Check enhanced Meshtastic health
+                if self.meshtastic_manager and self.meshtastic_initialized:
+                    try:
+                        connection_status = self.meshtastic_manager.get_connection_status()
+                        if not connection_status.get('initialized', False):
+                            logger.warning("Meshtastic manager not properly initialized, attempting restart...")
+                            if self.initialize_enhanced_meshtastic():
+                                logger.info("Successfully restarted Meshtastic manager")
+                                self.status['restart_count'] += 1
+                            else:
+                                logger.error("Failed to restart Meshtastic manager")
+                                self.status['error_count'] += 1
+                                self.status['meshtastic_running'] = False
+                    except Exception as e:
+                        logger.error(f"Error checking Meshtastic health: {e}")
+                        self.status['error_count'] += 1
+                
                 # Log status periodically
                 if self.status['restart_count'] > 0 or self.status['error_count'] > 0:
                     logger.info(f"System status: {self.status['restart_count']} restarts, {self.status['error_count']} errors")
@@ -341,6 +440,10 @@ class SystemManager:
         if not self.check_dependencies():
             logger.error("Dependency check failed, cannot start system")
             return False
+        
+        # Initialize enhanced Meshtastic first (before other components)
+        if not self.initialize_enhanced_meshtastic():
+            logger.warning("Enhanced Meshtastic initialization failed, continuing without it")
         
         # Start components in order
         components = [
@@ -371,6 +474,7 @@ class SystemManager:
         logger.info(f"  Receiver: {'✓' if self.status['receiver_running'] else '✗'}")
         logger.info(f"  Dashboard: {'✓' if self.status['dashboard_running'] else '✗'}")
         logger.info(f"  dump1090: {'✓' if self.status['dump1090_running'] else '✗'}")
+        logger.info(f"  Meshtastic: {'✓' if self.status['meshtastic_running'] else '✗'}")
         logger.info("")
         logger.info("Access points:")
         logger.info("  HTTP API: http://localhost:8080/data/aircraft.json")
@@ -383,11 +487,22 @@ class SystemManager:
     
     def get_status(self) -> dict:
         """Get current system status"""
-        return {
+        status = {
             **self.status,
             'uptime_seconds': (datetime.now() - self.status['start_time']).total_seconds() if self.status['start_time'] else 0,
             'processes': {name: proc.pid for name, proc in self.processes.items()}
         }
+        
+        # Add enhanced Meshtastic status if available
+        if self.meshtastic_manager and self.meshtastic_initialized:
+            try:
+                status['meshtastic_status'] = self.meshtastic_manager.get_connection_status()
+            except Exception as e:
+                status['meshtastic_status'] = {'error': str(e)}
+        else:
+            status['meshtastic_status'] = {'available': False, 'reason': 'Not initialized'}
+        
+        return status
     
     def print_status(self):
         """Print current system status"""
@@ -400,6 +515,7 @@ class SystemManager:
         print(f"Receiver: {'✓' if status['receiver_running'] else '✗'}")
         print(f"Dashboard: {'✓' if status['dashboard_running'] else '✗'}")
         print(f"dump1090: {'✓' if status['dump1090_running'] else '✗'}")
+        print(f"Meshtastic: {'✓' if status['meshtastic_running'] else '✗'}")
         print(f"Restarts: {status['restart_count']}")
         print(f"Errors: {status['error_count']}")
         

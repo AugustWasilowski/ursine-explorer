@@ -12,8 +12,8 @@
     "log_alerts": true,
     "alert_log_file": "alerts.log",
     "alert_interval_sec": 300,
-    "dump1090_path": "/usr/local/bin/dump1090",
-    "start_dump1090": true,
+    "dump1090_path": "/usr/bin/dump1090-fa",
+    "start_dump1090": false,
     "watchdog_timeout_sec": 60,
     "poll_interval_sec": 1,
     "pymodes": {

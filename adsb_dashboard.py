@@ -170,6 +170,24 @@ class ADSBDashboard:
             'alert_errors': 0,
             'meshtastic_status': 'unknown'
         }
+        
+        # Enhanced Meshtastic status tracking
+        self.meshtastic_status = {
+            'initialized': False,
+            'connection_mode': 'unknown',
+            'interfaces': {},
+            'active_channels': [],
+            'message_stats': {
+                'messages_sent': 0,
+                'messages_failed': 0,
+                'success_rate': 0.0
+            },
+            'device_info': {},
+            'mqtt_broker': 'unknown',
+            'last_update': None,
+            'health_score': 0,
+            'diagnostics': {}
+        }
         self.message_history = []  # Track message rates
         self.signal_strengths = []  # Track signal strengths
         self.sort_by = 'last_seen'  # Options: last_seen, altitude, speed, flight, hex, true_airspeed, heading, quality
@@ -178,6 +196,7 @@ class ADSBDashboard:
         self.show_data_quality = True
         self.filter_enhanced_only = False
         self.show_detailed_stats = False
+        self.show_meshtastic_status = False
         
     def load_config(self, config_path: str) -> dict:
         """Load configuration from JSON file"""
@@ -376,6 +395,21 @@ class ADSBDashboard:
             self.log_error("api_error", f"Failed to fetch alert status: {str(e)}", "alert_api")
             return None
     
+    def fetch_meshtastic_status(self) -> Optional[dict]:
+        """Fetch enhanced Meshtastic status and diagnostics"""
+        try:
+            url = f"http://{self.config['dump1090_host']}:8080/api/meshtastic/status"
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data and isinstance(data, dict):
+                return data
+            return None
+        except requests.RequestException as e:
+            self.log_error("api_error", f"Failed to fetch Meshtastic status: {str(e)}", "meshtastic_api")
+            return None
+    
     def update_aircraft(self, aircraft_data: dict):
         """Update aircraft tracking data"""
         if not aircraft_data or 'aircraft' not in aircraft_data:
@@ -502,6 +536,39 @@ class ADSBDashboard:
         
         if old_connected != new_connected:
             self.log_connection_change(old_connected, new_connected)
+    
+    def update_meshtastic_status(self, meshtastic_data: dict):
+        """Update enhanced Meshtastic status"""
+        if not meshtastic_data or not isinstance(meshtastic_data, dict):
+            return  # Don't update with invalid data
+        
+        # Update all available fields
+        for key, value in meshtastic_data.items():
+            if key in self.meshtastic_status and value is not None:
+                self.meshtastic_status[key] = value
+        
+        self.meshtastic_status['last_update'] = datetime.now()
+        
+        # Log significant status changes
+        if 'initialized' in meshtastic_data:
+            if meshtastic_data['initialized'] != self.meshtastic_status.get('initialized', False):
+                status = "initialized" if meshtastic_data['initialized'] else "shutdown"
+                self.log_error("meshtastic_status", f"Meshtastic {status}", "meshtastic")
+        
+        # Update interface connection counts
+        if 'interfaces' in meshtastic_data:
+            connected_interfaces = sum(1 for iface in meshtastic_data['interfaces'].values() 
+                                     if iface.get('connection_status', {}).get('state') == 'connected')
+            total_interfaces = len(meshtastic_data['interfaces'])
+            
+            # Log interface changes
+            old_connected = len([iface for iface in self.meshtastic_status.get('interfaces', {}).values() 
+                               if iface.get('connection_status', {}).get('state') == 'connected'])
+            
+            if connected_interfaces != old_connected:
+                self.log_error("meshtastic_interfaces", 
+                             f"Meshtastic interfaces: {connected_interfaces}/{total_interfaces} connected", 
+                             "meshtastic")
     
     def log_error(self, error_type: str, message: str, source: str = "system"):
         """Log an error with timestamp"""
@@ -1069,6 +1136,157 @@ class ADSBDashboard:
         
         return start_y
     
+    def draw_meshtastic_status(self, stdscr, start_y: int, height: int, width: int):
+        """Draw enhanced Meshtastic status display"""
+        if start_y >= height - 3:
+            return start_y
+        
+        # Meshtastic status header
+        meshtastic_title = "📡 Enhanced Meshtastic Status:"
+        status_color = curses.A_BOLD | curses.color_pair(1)
+        
+        # Color code based on initialization status
+        if self.meshtastic_status.get('initialized', False):
+            health_score = self.meshtastic_status.get('health_score', 0)
+            if health_score >= 80:
+                status_color = curses.A_BOLD | curses.color_pair(3)  # Green for healthy
+            elif health_score >= 50:
+                status_color = curses.A_BOLD | curses.color_pair(4)  # Yellow for fair
+            else:
+                status_color = curses.A_BOLD | curses.color_pair(2)  # Red for poor
+        else:
+            status_color = curses.A_BOLD | curses.A_DIM  # Dimmed for not initialized
+        
+        stdscr.addstr(start_y, 0, meshtastic_title, status_color)
+        start_y += 1
+        
+        # Connection mode and initialization status
+        init_status = "✅ Initialized" if self.meshtastic_status.get('initialized', False) else "❌ Not Initialized"
+        connection_mode = self.meshtastic_status.get('connection_mode', 'unknown').title()
+        health_score = self.meshtastic_status.get('health_score', 0)
+        
+        status_line = f"  Status: {init_status} | Mode: {connection_mode} | Health: {health_score}%"
+        stdscr.addstr(start_y, 0, status_line[:width-1])
+        start_y += 1
+        
+        # Interface status
+        interfaces = self.meshtastic_status.get('interfaces', {})
+        if interfaces:
+            connected_count = sum(1 for iface in interfaces.values() 
+                                if iface.get('connection_status', {}).get('state') == 'connected')
+            total_count = len(interfaces)
+            
+            interface_line = f"  Interfaces: {connected_count}/{total_count} connected"
+            
+            # Add interface details
+            interface_details = []
+            for iface_name, iface_data in interfaces.items():
+                conn_status = iface_data.get('connection_status', {})
+                state = conn_status.get('state', 'unknown')
+                
+                if state == 'connected':
+                    icon = "✅"
+                elif state == 'connecting':
+                    icon = "🔄"
+                else:
+                    icon = "❌"
+                
+                interface_details.append(f"{icon}{iface_name}")
+            
+            if interface_details:
+                interface_line += f" ({', '.join(interface_details)})"
+            
+            stdscr.addstr(start_y, 0, interface_line[:width-1])
+            start_y += 1
+        
+        # Active channels
+        channels = self.meshtastic_status.get('active_channels', [])
+        if channels:
+            channel_names = [ch.get('name', 'Unknown') for ch in channels if isinstance(ch, dict)]
+            encrypted_count = sum(1 for ch in channels if isinstance(ch, dict) and ch.get('is_encrypted', False))
+            
+            channel_line = f"  Channels: {len(channels)} active"
+            if encrypted_count > 0:
+                channel_line += f" ({encrypted_count} encrypted)"
+            
+            if channel_names:
+                channel_line += f" - {', '.join(channel_names[:3])}"  # Show first 3 channels
+                if len(channel_names) > 3:
+                    channel_line += f" +{len(channel_names) - 3} more"
+            
+            stdscr.addstr(start_y, 0, channel_line[:width-1])
+            start_y += 1
+        
+        # Message statistics
+        msg_stats = self.meshtastic_status.get('message_stats', {})
+        if msg_stats:
+            messages_sent = msg_stats.get('messages_sent', 0)
+            messages_failed = msg_stats.get('messages_failed', 0)
+            success_rate = msg_stats.get('success_rate', 0.0)
+            
+            msg_line = f"  Messages: {messages_sent} sent, {messages_failed} failed"
+            if messages_sent > 0:
+                msg_line += f" (Success: {success_rate:.1%})"
+            
+            stdscr.addstr(start_y, 0, msg_line[:width-1])
+            start_y += 1
+        
+        # Device information
+        device_info = self.meshtastic_status.get('device_info', {})
+        if device_info:
+            device_details = []
+            
+            # Serial device info
+            if 'serial' in device_info:
+                serial_info = device_info['serial']
+                node_id = serial_info.get('node_id', 'Unknown')
+                firmware = serial_info.get('firmware_version', 'Unknown')
+                device_details.append(f"Serial: {node_id} (FW: {firmware})")
+            
+            # MQTT broker info
+            if 'mqtt' in device_info:
+                mqtt_info = device_info['mqtt']
+                broker = mqtt_info.get('broker', 'Unknown')
+                device_details.append(f"MQTT: {broker}")
+            
+            if device_details:
+                device_line = f"  Devices: {' | '.join(device_details)}"
+                stdscr.addstr(start_y, 0, device_line[:width-1])
+                start_y += 1
+        
+        # MQTT broker status
+        mqtt_broker = self.meshtastic_status.get('mqtt_broker', 'unknown')
+        if mqtt_broker != 'unknown':
+            mqtt_line = f"  MQTT Broker: {mqtt_broker}"
+            stdscr.addstr(start_y, 0, mqtt_line[:width-1])
+            start_y += 1
+        
+        # Last update time
+        last_update = self.meshtastic_status.get('last_update')
+        if last_update:
+            age = int((datetime.now() - last_update).total_seconds())
+            update_line = f"  Last Update: {age}s ago"
+            if age > 30:
+                update_line += " ⚠️"
+            stdscr.addstr(start_y, 0, update_line[:width-1])
+            start_y += 1
+        
+        # Diagnostics summary
+        diagnostics = self.meshtastic_status.get('diagnostics', {})
+        if diagnostics:
+            config_issues = diagnostics.get('configuration_issues', 0)
+            interface_tests = diagnostics.get('interface_tests_passed', 0)
+            total_tests = diagnostics.get('total_interface_tests', 0)
+            
+            diag_line = f"  Diagnostics: {config_issues} config issues"
+            if total_tests > 0:
+                diag_line += f", {interface_tests}/{total_tests} tests passed"
+            
+            stdscr.addstr(start_y, 0, diag_line[:width-1])
+            start_y += 1
+        
+        return start_y + 1
+    
     def draw_footer(self, stdscr, height: int, width: int):
         """Draw dashboard footer with controls"""
         footer_y = height - 1
@@ -1078,7 +1296,8 @@ class ADSBDashboard:
             waterfall_status = "ON" if self.show_waterfall else "OFF"
             enhanced_filter = "ON" if self.filter_enhanced_only else "OFF"
             stats_status = "ON" if self.show_detailed_stats else "OFF"
-            controls = f"Controls: q=quit | m=menu | w=waterfall({waterfall_status}) | t=stats({stats_status}) | s=sort({self.sort_by}) | r=reverse | d=display({self.display_mode}) | e=enhanced({enhanced_filter}) | c=clear_errors | Space=refresh"
+            meshtastic_status = "ON" if self.show_meshtastic_status else "OFF"
+            controls = f"Controls: q=quit | m=menu | w=waterfall({waterfall_status}) | t=stats({stats_status}) | n=meshtastic({meshtastic_status}) | s=sort({self.sort_by}) | r=reverse | d=display({self.display_mode}) | e=enhanced({enhanced_filter}) | c=clear_errors | Space=refresh"
         stdscr.addstr(footer_y, 0, controls[:width-1], curses.A_DIM)
     
     def handle_menu_input(self, key):
@@ -1179,6 +1398,9 @@ class ADSBDashboard:
                     elif key == ord('t') or key == ord('T'):
                         # Toggle detailed statistics display
                         self.show_detailed_stats = not self.show_detailed_stats
+                    elif key == ord('n') or key == ord('N'):
+                        # Toggle Meshtastic status display
+                        self.show_meshtastic_status = not self.show_meshtastic_status
                     elif key == ord('c') or key == ord('C'):
                         # Clear error log
                         self.error_log.clear()
@@ -1242,6 +1464,14 @@ class ADSBDashboard:
                             except Exception as e:
                                 # Silently handle stats errors to prevent display disruption
                                 pass
+                            
+                            try:
+                                meshtastic_data = self.fetch_meshtastic_status()
+                                if meshtastic_data and isinstance(meshtastic_data, dict):
+                                    self.update_meshtastic_status(meshtastic_data)
+                            except Exception as e:
+                                # Silently handle stats errors to prevent display disruption
+                                pass
                                 
                         except Exception as e:
                             # Silently handle any remaining errors
@@ -1291,15 +1521,18 @@ class ADSBDashboard:
                 try:
                     data_start_y = self.draw_header(stdscr, height, width)
                     if not self.menu_active:
+                        current_y = data_start_y
+                        
                         if self.show_detailed_stats:
-                            stats_end_y = self.draw_detailed_stats(stdscr, data_start_y, height, width)
-                            error_end_y = self.draw_error_diagnostics(stdscr, stats_end_y, height, width)
-                            self.draw_aircraft_list(stdscr, error_end_y, height, width)
-                        elif self.show_waterfall:
-                            waterfall_end_y = self.draw_mini_waterfall(stdscr, data_start_y, height, width)
-                            self.draw_aircraft_list(stdscr, waterfall_end_y, height, width)
-                        else:
-                            self.draw_aircraft_list(stdscr, data_start_y, height, width)
+                            current_y = self.draw_detailed_stats(stdscr, current_y, height, width)
+                        
+                        if self.show_meshtastic_status:
+                            current_y = self.draw_meshtastic_status(stdscr, current_y, height, width)
+                        
+                        if self.show_waterfall:
+                            current_y = self.draw_mini_waterfall(stdscr, current_y, height, width)
+                        
+                        self.draw_aircraft_list(stdscr, current_y, height, width)
                     self.draw_footer(stdscr, height, width)
                     
                     stdscr.refresh()

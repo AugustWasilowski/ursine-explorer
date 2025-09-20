@@ -165,10 +165,8 @@ class MeshtasticManager:
             if self.config.connection_mode in ["serial", "dual"]:
                 try:
                     self.serial_interface = EnhancedSerialInterface(
-                        port=self.config.meshtastic_port,
-                        baud=self.config.meshtastic_baud,
-                        channel_manager=self.channel_manager,
-                        config=self.config
+                        config=self.config,
+                        channel_manager=self.channel_manager
                     )
                     
                     if self.serial_interface.connect():
