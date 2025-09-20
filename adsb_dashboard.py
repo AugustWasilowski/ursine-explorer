@@ -311,7 +311,15 @@ class ADSBDashboard:
             url = f"http://{self.config['dump1090_host']}:8080/data/aircraft.json"
             response = requests.get(url, timeout=2)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            # Validate that we got actual aircraft data
+            if data and 'aircraft' in data and isinstance(data['aircraft'], list):
+                return data
+            else:
+                # Invalid data structure, don't update
+                return None
+                
         except requests.RequestException as e:
             self.stats['errors'] += 1
             self.log_error("api_error", f"Failed to fetch aircraft data: {str(e)}", "aircraft_api")
@@ -353,6 +361,7 @@ class ADSBDashboard:
     def update_aircraft(self, aircraft_data: dict):
         """Update aircraft tracking data"""
         if not aircraft_data or 'aircraft' not in aircraft_data:
+            # Don't clear existing data if update fails - preserve what we have
             return
         
         current_time = datetime.now()
@@ -761,9 +770,9 @@ class ADSBDashboard:
     
     def _format_standard_line(self, aircraft, watchlist_indicator):
         """Format aircraft line in standard mode"""
-        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
-        spd_str = f"{aircraft.speed}" if isinstance(aircraft.speed, (int, float)) else "---"
-        trk_str = f"{aircraft.track}" if isinstance(aircraft.track, (int, float)) else "---"
+        alt_str = f"{int(aircraft.altitude)}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        spd_str = f"{int(aircraft.speed)}" if isinstance(aircraft.speed, (int, float)) else "---"
+        trk_str = f"{int(aircraft.track)}" if isinstance(aircraft.track, (int, float)) else "---"
         age_str = f"{aircraft.age_seconds()}s"
         dur_str = f"{aircraft.duration_seconds()}s"
         msg_str = f"{aircraft.messages}" if isinstance(aircraft.messages, int) else "---"
@@ -772,11 +781,11 @@ class ADSBDashboard:
     
     def _format_enhanced_line(self, aircraft, watchlist_indicator):
         """Format aircraft line in enhanced mode showing pyModeS data"""
-        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
-        tas_str = f"{aircraft.true_airspeed}" if isinstance(aircraft.true_airspeed, (int, float)) else "---"
-        ias_str = f"{aircraft.indicated_airspeed}" if isinstance(aircraft.indicated_airspeed, (int, float)) else "---"
-        hdg_str = f"{aircraft.magnetic_heading}" if isinstance(aircraft.magnetic_heading, (int, float)) else "---"
-        vr_str = f"{aircraft.vertical_rate}" if isinstance(aircraft.vertical_rate, (int, float)) else "---"
+        alt_str = f"{int(aircraft.altitude)}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        tas_str = f"{int(aircraft.true_airspeed)}" if isinstance(aircraft.true_airspeed, (int, float)) else "---"
+        ias_str = f"{int(aircraft.indicated_airspeed)}" if isinstance(aircraft.indicated_airspeed, (int, float)) else "---"
+        hdg_str = f"{int(aircraft.magnetic_heading)}" if isinstance(aircraft.magnetic_heading, (int, float)) else "---"
+        vr_str = f"{int(aircraft.vertical_rate)}" if isinstance(aircraft.vertical_rate, (int, float)) else "---"
         age_str = f"{aircraft.age_seconds()}s"
         
         # Data quality indicator
@@ -787,9 +796,9 @@ class ADSBDashboard:
     
     def _format_compact_line(self, aircraft, watchlist_indicator):
         """Format aircraft line in compact mode"""
-        alt_str = f"{aircraft.altitude}" if isinstance(aircraft.altitude, (int, float)) else "---"
-        spd_str = f"{aircraft.speed}" if isinstance(aircraft.speed, (int, float)) else "---"
-        trk_str = f"{aircraft.track}" if isinstance(aircraft.track, (int, float)) else "---"
+        alt_str = f"{int(aircraft.altitude)}" if isinstance(aircraft.altitude, (int, float)) else "---"
+        spd_str = f"{int(aircraft.speed)}" if isinstance(aircraft.speed, (int, float)) else "---"
+        trk_str = f"{int(aircraft.track)}" if isinstance(aircraft.track, (int, float)) else "---"
         age_str = f"{aircraft.age_seconds()}s"
         
         # Shortened callsign
@@ -835,6 +844,18 @@ class ADSBDashboard:
     def read_fft_data(self):
         """Read FFT data for waterfall display"""
         try:
+            # First try to get FFT data from the API
+            url = f"http://{self.config['dump1090_host']}:8080/data/fft.json"
+            response = requests.get(url, timeout=1)
+            if response.status_code == 200:
+                fft_data = response.json()
+                if 'fft_data' in fft_data and fft_data['fft_data']:
+                    return np.array(fft_data['fft_data'])
+        except:
+            pass
+        
+        # Fallback to file-based FFT data
+        try:
             if not os.path.exists(self.fft_file):
                 return None
             
@@ -868,13 +889,14 @@ class ADSBDashboard:
             if len(self.waterfall_data) > 10:
                 self.waterfall_data.pop(0)
         
-        if not self.waterfall_data:
-            stdscr.addstr(start_y, 0, "Waterfall: Waiting for FFT data...", curses.A_DIM)
-            return start_y + 1
-        
         # Draw waterfall title
         stdscr.addstr(start_y, 0, "Mini Waterfall (1090 MHz ±1 MHz):", curses.A_BOLD)
         start_y += 1
+        
+        if not self.waterfall_data:
+            stdscr.addstr(start_y, 0, "FFT data not available - waterfall requires dump1090 with --write-json option", curses.A_DIM)
+            stdscr.addstr(start_y + 1, 0, "or integrated receiver FFT support. Press 'w' to disable waterfall.", curses.A_DIM)
+            return start_y + 3
         
         # Focus on ADS-B frequency range
         center_bin = len(self.waterfall_data[0]) // 2
@@ -1139,30 +1161,53 @@ class ADSBDashboard:
     def data_updater(self):
         """Background thread to update aircraft data"""
         stats_update_counter = 0
+        last_successful_update = datetime.now()
+        
         while self.running:
-            aircraft_data = self.fetch_aircraft_data()
-            if aircraft_data:
-                self.update_aircraft(aircraft_data)
-            
-            # Update pyModeS and source stats every 5 seconds
-            stats_update_counter += 1
-            if stats_update_counter >= 5:
-                try:
-                    pymodes_data = self.fetch_pymodes_stats()
-                    if pymodes_data:
-                        self.update_pymodes_stats(pymodes_data)
-                    
-                    source_data = self.fetch_source_stats()
-                    if source_data:
-                        self.update_source_stats(source_data)
-                    
-                    alert_data = self.fetch_alert_status()
-                    if alert_data:
-                        self.alert_status.update(alert_data)
-                except Exception as e:
-                    self.log_error("stats_update_error", f"Failed to update statistics: {str(e)}", "data_updater")
+            try:
+                aircraft_data = self.fetch_aircraft_data()
+                if aircraft_data:
+                    self.update_aircraft(aircraft_data)
+                    last_successful_update = datetime.now()
+                else:
+                    # If we haven't had a successful update in a while, log it
+                    time_since_update = (datetime.now() - last_successful_update).total_seconds()
+                    if time_since_update > 30:  # 30 seconds without data
+                        self.log_error("data_timeout", f"No aircraft data for {int(time_since_update)} seconds", "data_updater")
                 
-                stats_update_counter = 0
+                # Update pyModeS and source stats every 5 seconds
+                stats_update_counter += 1
+                if stats_update_counter >= 5:
+                    try:
+                        # Try to update stats, but don't fail if any individual call fails
+                        try:
+                            pymodes_data = self.fetch_pymodes_stats()
+                            if pymodes_data:
+                                self.update_pymodes_stats(pymodes_data)
+                        except Exception as e:
+                            self.log_error("pymodes_stats_error", f"Failed to fetch pyModeS stats: {str(e)}", "data_updater")
+                        
+                        try:
+                            source_data = self.fetch_source_stats()
+                            if source_data:
+                                self.update_source_stats(source_data)
+                        except Exception as e:
+                            self.log_error("source_stats_error", f"Failed to fetch source stats: {str(e)}", "data_updater")
+                        
+                        try:
+                            alert_data = self.fetch_alert_status()
+                            if alert_data:
+                                self.alert_status.update(alert_data)
+                        except Exception as e:
+                            self.log_error("alert_stats_error", f"Failed to fetch alert status: {str(e)}", "data_updater")
+                            
+                    except Exception as e:
+                        self.log_error("stats_update_error", f"General stats update error: {str(e)}", "data_updater")
+                    
+                    stats_update_counter = 0
+                
+            except Exception as e:
+                self.log_error("data_updater_error", f"Data updater thread error: {str(e)}", "data_updater")
             
             time.sleep(1)  # Update every second
     

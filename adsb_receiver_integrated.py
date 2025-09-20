@@ -248,12 +248,7 @@ class IntegratedADSBServer:
         """Initialize enhanced logging system"""
         try:
             log_config = self.config.get('logging', {})
-            initialize_logger(
-                level=log_config.get('level', 'INFO'),
-                log_file=log_config.get('log_file', 'adsb_receiver.log'),
-                max_size_mb=log_config.get('max_log_size_mb', 100),
-                backup_count=log_config.get('backup_count', 5)
-            )
+            initialize_logger(self.config)
             self.adsb_logger = get_logger()
             logger.info("Enhanced logging system initialized")
         except Exception as e:
