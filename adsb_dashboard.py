@@ -412,16 +412,21 @@ class ADSBDashboard:
     
     def update_aircraft(self, aircraft_data: dict):
         """Update aircraft tracking data"""
-        if not aircraft_data or 'aircraft' not in aircraft_data:
+        if not aircraft_data or 'aircraft' not in aircraft_data or not isinstance(aircraft_data['aircraft'], list):
             # Don't clear existing data if update fails - preserve what we have
             return
         
         current_time = datetime.now()
         current_aircraft = set()
         
-        # Update basic stats
-        prev_messages = self.stats['messages_total']
-        self.stats['messages_total'] = aircraft_data.get('messages', 0)
+        # Update basic stats safely
+        prev_messages = self.stats.get('messages_total', 0)
+        new_messages = aircraft_data.get('messages', 0)
+        
+        # Only update if we got valid data
+        if isinstance(new_messages, (int, float)) and new_messages >= 0:
+            self.stats['messages_total'] = int(new_messages)
+        
         self.stats['last_update'] = current_time
         self.stats['update_count'] += 1
         
@@ -777,30 +782,40 @@ class ADSBDashboard:
         stdscr.addstr(5, 0, sources_line[:width-1], curses.color_pair(5))
         
         # System status line with health indicator
-        health_status = self.get_system_health_status()
-        health_icons = {
-            'excellent': '💚', 'good': '💛', 'fair': '🟠', 'poor': '🔴', 'critical': '💀'
-        }
-        health_icon = health_icons.get(health_status['status'], '❓')
-        
-        status_line = f"Updates: {self.stats['update_count']} | Errors: {self.stats['errors']} | Health: {health_icon}"
-        if self.stats['last_update']:
-            age = int((datetime.now() - self.stats['last_update']).total_seconds())
-            status_line += f" | Last Update: {age}s ago"
-            if age > 5:
-                status_line += " ⚠️"
-        else:
-            status_line += " | Waiting for data... 🔄"
-        
-        # Add receiver status if available
         try:
-            receiver_status = self.get_receiver_status()
-            if 'dump1090_running' in receiver_status:
-                status_line += f" | dump1090: {'✅' if receiver_status['dump1090_running'] else '❌'}"
-            if 'meshtastic_connected' in receiver_status:
-                status_line += f" | Meshtastic: {'✅' if receiver_status['meshtastic_connected'] else '❌'}"
-        except:
-            pass
+            health_status = self.get_system_health_status()
+            health_icons = {
+                'excellent': '💚', 'good': '💛', 'fair': '🟠', 'poor': '🔴', 'critical': '💀'
+            }
+            health_icon = health_icons.get(health_status.get('status', 'unknown'), '❓')
+            
+            status_line = f"Updates: {self.stats.get('update_count', 0)} | Errors: {self.stats.get('errors', 0)} | Health: {health_icon}"
+            
+            if self.stats.get('last_update'):
+                try:
+                    age = int((datetime.now() - self.stats['last_update']).total_seconds())
+                    status_line += f" | Last Update: {age}s ago"
+                    if age > 5:
+                        status_line += " ⚠️"
+                except:
+                    status_line += " | Last Update: Unknown"
+            else:
+                status_line += " | Waiting for data... 🔄"
+            
+            # Add receiver status if available (but don't let it block the display)
+            try:
+                receiver_status = self.get_receiver_status()
+                if isinstance(receiver_status, dict):
+                    if 'dump1090_running' in receiver_status:
+                        status_line += f" | dump1090: {'✅' if receiver_status['dump1090_running'] else '❌'}"
+                    if 'meshtastic_connected' in receiver_status:
+                        status_line += f" | Meshtastic: {'✅' if receiver_status['meshtastic_connected'] else '❌'}"
+            except:
+                # Don't add receiver status if there's an error
+                pass
+        except Exception:
+            # Fallback status line if health calculation fails
+            status_line = f"Updates: {self.stats.get('update_count', 0)} | Errors: {self.stats.get('errors', 0)} | Status: Unknown"
         
         # Color code the status line based on health
         status_color = curses.A_NORMAL
@@ -844,29 +859,45 @@ class ADSBDashboard:
     
     def draw_aircraft_list(self, stdscr, start_y: int, height: int, width: int):
         """Draw the aircraft list"""
-        aircraft_list = self.get_sorted_aircraft()
-        max_rows = height - start_y - 2
-        
-        for i, aircraft in enumerate(aircraft_list[:max_rows]):
-            y = start_y + i
-            if y >= height - 1:
-                break
+        try:
+            aircraft_list = self.get_sorted_aircraft()
+            max_rows = height - start_y - 2
             
-            # Add watchlist indicator
-            watchlist_indicator = "🎯" if getattr(aircraft, 'is_watchlist', False) else "  "
+            # Ensure we don't try to draw beyond screen bounds
+            if start_y >= height - 1 or max_rows <= 0:
+                return
             
-            # Format line based on display mode
-            if self.display_mode == 'enhanced':
-                line = self._format_enhanced_line(aircraft, watchlist_indicator)
-            elif self.display_mode == 'compact':
-                line = self._format_compact_line(aircraft, watchlist_indicator)
-            else:  # standard
-                line = self._format_standard_line(aircraft, watchlist_indicator)
-            
-            # Choose color based on aircraft properties
-            color_attr = self._get_aircraft_color(aircraft)
-            
-            stdscr.addstr(y, 0, line[:width-1], color_attr)
+            for i, aircraft in enumerate(aircraft_list[:max_rows]):
+                y = start_y + i
+                if y >= height - 1:
+                    break
+                
+                try:
+                    # Add watchlist indicator
+                    watchlist_indicator = "🎯" if getattr(aircraft, 'is_watchlist', False) else "  "
+                    
+                    # Format line based on display mode
+                    if self.display_mode == 'enhanced':
+                        line = self._format_enhanced_line(aircraft, watchlist_indicator)
+                    elif self.display_mode == 'compact':
+                        line = self._format_compact_line(aircraft, watchlist_indicator)
+                    else:  # standard
+                        line = self._format_standard_line(aircraft, watchlist_indicator)
+                    
+                    # Choose color based on aircraft properties
+                    color_attr = self._get_aircraft_color(aircraft)
+                    
+                    # Ensure line fits within screen width
+                    safe_line = line[:width-1] if len(line) >= width else line
+                    stdscr.addstr(y, 0, safe_line, color_attr)
+                    
+                except (curses.error, ValueError):
+                    # Skip this line if there's a drawing error
+                    continue
+                    
+        except Exception:
+            # If aircraft list drawing fails completely, just skip it
+            pass
     
     def _format_standard_line(self, aircraft, watchlist_indicator):
         """Format aircraft line in standard mode"""
@@ -1421,72 +1452,68 @@ class ADSBDashboard:
         
         while self.running:
             try:
+                # Fetch aircraft data with timeout protection
                 aircraft_data = self.fetch_aircraft_data()
-                if aircraft_data:
+                if aircraft_data and isinstance(aircraft_data, dict) and 'aircraft' in aircraft_data:
                     self.update_aircraft(aircraft_data)
                     last_successful_update = datetime.now()
                 else:
-                    # If we haven't had a successful update in a while, log it
+                    # If we haven't had a successful update in a while, log it (but not too frequently)
                     time_since_update = (datetime.now() - last_successful_update).total_seconds()
-                    if time_since_update > 30:  # 30 seconds without data
+                    if time_since_update > 60 and time_since_update % 30 < 1:  # Log every 30s after 60s timeout
                         self.log_error("data_timeout", f"No aircraft data for {int(time_since_update)} seconds", "data_updater")
                 
-                # Update pyModeS and source stats every 5 seconds
+                # Update additional stats every 5 seconds to reduce API load
                 stats_update_counter += 1
                 if stats_update_counter >= 5:
-                    # Run stats updates in background to prevent blocking main display
-                    def update_stats_background():
-                        try:
-                            # Try to update stats, but don't fail if any individual call fails
-                            try:
-                                pymodes_data = self.fetch_pymodes_stats()
-                                if pymodes_data and isinstance(pymodes_data, dict):
-                                    self.update_pymodes_stats(pymodes_data)
-                            except Exception as e:
-                                # Silently handle stats errors to prevent display disruption
-                                pass
-                            
-                            try:
-                                source_data = self.fetch_source_stats()
-                                if source_data and isinstance(source_data, dict):
-                                    self.update_source_stats(source_data)
-                            except Exception as e:
-                                # Silently handle stats errors to prevent display disruption
-                                pass
-                            
-                            try:
-                                alert_data = self.fetch_alert_status()
-                                if alert_data and isinstance(alert_data, dict):
-                                    # Only update specific fields to prevent overwriting
-                                    for key, value in alert_data.items():
-                                        if key in self.alert_status and value is not None:
-                                            self.alert_status[key] = value
-                            except Exception as e:
-                                # Silently handle stats errors to prevent display disruption
-                                pass
-                            
-                            try:
-                                meshtastic_data = self.fetch_meshtastic_status()
-                                if meshtastic_data and isinstance(meshtastic_data, dict):
-                                    self.update_meshtastic_status(meshtastic_data)
-                            except Exception as e:
-                                # Silently handle stats errors to prevent display disruption
-                                pass
-                                
-                        except Exception as e:
-                            # Silently handle any remaining errors
-                            pass
-                    
-                    # Run stats update in background thread to prevent blocking
-                    stats_thread = threading.Thread(target=update_stats_background, daemon=True)
-                    stats_thread.start()
-                    
+                    self._update_additional_stats()
                     stats_update_counter = 0
                 
             except Exception as e:
-                self.log_error("data_updater_error", f"Data updater thread error: {str(e)}", "data_updater")
+                # Log errors but don't let them crash the updater
+                self.log_error("data_updater_error", f"Data updater error: {str(e)}", "data_updater")
             
-            time.sleep(1)  # Update every second
+            # Sleep for 1 second between updates
+            time.sleep(1)
+    
+    def _update_additional_stats(self):
+        """Update additional statistics in a separate method for better error handling"""
+        # Update each stat source independently so one failure doesn't affect others
+        
+        # pyModeS stats
+        try:
+            pymodes_data = self.fetch_pymodes_stats()
+            if pymodes_data and isinstance(pymodes_data, dict):
+                self.update_pymodes_stats(pymodes_data)
+        except Exception:
+            pass  # Silently handle to prevent display disruption
+        
+        # Source stats
+        try:
+            source_data = self.fetch_source_stats()
+            if source_data and isinstance(source_data, dict):
+                self.update_source_stats(source_data)
+        except Exception:
+            pass  # Silently handle to prevent display disruption
+        
+        # Alert status
+        try:
+            alert_data = self.fetch_alert_status()
+            if alert_data and isinstance(alert_data, dict):
+                # Only update specific fields to prevent overwriting
+                for key, value in alert_data.items():
+                    if key in self.alert_status and value is not None:
+                        self.alert_status[key] = value
+        except Exception:
+            pass  # Silently handle to prevent display disruption
+        
+        # Meshtastic status
+        try:
+            meshtastic_data = self.fetch_meshtastic_status()
+            if meshtastic_data and isinstance(meshtastic_data, dict):
+                self.update_meshtastic_status(meshtastic_data)
+        except Exception:
+            pass  # Silently handle to prevent display disruption
     
     def run_dashboard(self, stdscr):
         """Main dashboard loop"""
@@ -1498,6 +1525,10 @@ class ADSBDashboard:
         curses.init_pair(4, curses.COLOR_MAGENTA, curses.COLOR_BLACK) # Performance stats
         curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLACK)   # HackRF settings
         
+        # Configure curses for better performance
+        curses.curs_set(0)  # Hide cursor
+        stdscr.timeout(100)  # Set timeout for getch
+        
         # Start background data updater
         data_thread = threading.Thread(target=self.data_updater, daemon=True)
         data_thread.start()
@@ -1506,20 +1537,26 @@ class ADSBDashboard:
         input_thread = threading.Thread(target=self.handle_input, args=(stdscr,), daemon=True)
         input_thread.start()
         
-        # Track last successful draw to prevent flickering
-        last_successful_draw = True
+        # Track drawing state
+        last_height, last_width = 0, 0
+        force_redraw = True
+        consecutive_errors = 0
         
         while self.running:
             try:
-                # Only clear screen if we're confident we can redraw everything
-                if last_successful_draw:
-                    stdscr.clear()
-                
                 height, width = stdscr.getmaxyx()
                 
-                # Draw dashboard components with error handling
+                # Only clear screen when necessary (size change or force redraw)
+                if height != last_height or width != last_width or force_redraw:
+                    stdscr.clear()
+                    last_height, last_width = height, width
+                    force_redraw = False
+                
+                # Draw dashboard components with comprehensive error handling
                 try:
+                    # Draw all components in order
                     data_start_y = self.draw_header(stdscr, height, width)
+                    
                     if not self.menu_active:
                         current_y = data_start_y
                         
@@ -1532,28 +1569,47 @@ class ADSBDashboard:
                         if self.show_waterfall:
                             current_y = self.draw_mini_waterfall(stdscr, current_y, height, width)
                         
-                        self.draw_aircraft_list(stdscr, current_y, height, width)
+                        # Only draw aircraft list if we have space
+                        if current_y < height - 2:
+                            self.draw_aircraft_list(stdscr, current_y, height, width)
+                    
                     self.draw_footer(stdscr, height, width)
                     
+                    # Refresh screen only after all drawing is complete
                     stdscr.refresh()
-                    last_successful_draw = True
+                    consecutive_errors = 0
                     
                 except Exception as e:
-                    # If drawing fails, don't clear screen next time to prevent flickering
-                    last_successful_draw = False
-                    # Try to at least show an error message
+                    consecutive_errors += 1
+                    
+                    # If we have too many consecutive errors, force a redraw
+                    if consecutive_errors >= 3:
+                        force_redraw = True
+                        consecutive_errors = 0
+                    
+                    # Try to show error message without disrupting display too much
                     try:
-                        stdscr.addstr(0, 0, f"Display error: {str(e)[:width-1]}", curses.A_BOLD)
+                        error_msg = f"Draw error: {str(e)[:width-20]}"
+                        stdscr.addstr(height-2, 0, error_msg, curses.A_BOLD | curses.color_pair(2))
                         stdscr.refresh()
                     except:
-                        pass
+                        # If we can't even draw the error, force a complete redraw next time
+                        force_redraw = True
                 
-                time.sleep(1.0)  # Refresh display once per second to reduce flickering
+                # Slower refresh rate to reduce flickering
+                time.sleep(1.0)
                 
             except curses.error:
-                last_successful_draw = False
+                # Terminal size changed or other curses error
+                force_redraw = True
+                time.sleep(0.5)
             except KeyboardInterrupt:
                 self.running = False
+            except Exception as e:
+                # Unexpected error - log it and continue
+                self.log_error("dashboard_error", f"Dashboard loop error: {str(e)}", "dashboard")
+                force_redraw = True
+                time.sleep(1.0)
     
     def run(self):
         """Start the dashboard"""
