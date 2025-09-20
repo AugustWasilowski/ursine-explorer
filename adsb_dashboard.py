@@ -328,10 +328,15 @@ class ADSBDashboard:
     def fetch_pymodes_stats(self) -> Optional[dict]:
         """Fetch pyModeS decoder statistics"""
         try:
-            url = f"http://{self.config['dump1090_host']}:8080/api/stats/pymodes"
+            url = f"http://{self.config['dump1090_host']}:8080/api/stats"
             response = requests.get(url, timeout=2)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            # Extract pyModeS-related stats from the general stats endpoint
+            if data and isinstance(data, dict):
+                return data
+            return None
         except requests.RequestException as e:
             self.log_error("api_error", f"Failed to fetch pyModeS stats: {str(e)}", "pymodes_api")
             return None
@@ -339,10 +344,14 @@ class ADSBDashboard:
     def fetch_source_stats(self) -> Optional[dict]:
         """Fetch message source statistics"""
         try:
-            url = f"http://{self.config['dump1090_host']}:8080/api/stats/sources"
+            url = f"http://{self.config['dump1090_host']}:8080/api/sources"
             response = requests.get(url, timeout=2)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            if data and isinstance(data, dict):
+                return data
+            return None
         except requests.RequestException as e:
             self.log_error("api_error", f"Failed to fetch source stats: {str(e)}", "source_api")
             return None
@@ -350,10 +359,19 @@ class ADSBDashboard:
     def fetch_alert_status(self) -> Optional[dict]:
         """Fetch alert system status"""
         try:
-            url = f"http://{self.config['dump1090_host']}:8080/api/stats/alerts"
+            url = f"http://{self.config['dump1090_host']}:8080/api/status"
             response = requests.get(url, timeout=2)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            if data and isinstance(data, dict):
+                # Extract alert-related information from status
+                return {
+                    'watchlist_alerts_sent': data.get('statistics', {}).get('watchlist_alerts', 0),
+                    'meshtastic_status': 'connected' if data.get('meshtastic_connected', False) else 'disconnected',
+                    'alert_errors': 0  # Default value
+                }
+            return None
         except requests.RequestException as e:
             self.log_error("api_error", f"Failed to fetch alert status: {str(e)}", "alert_api")
             return None
@@ -450,7 +468,14 @@ class ADSBDashboard:
     
     def update_pymodes_stats(self, pymodes_data: dict):
         """Update pyModeS decoder statistics"""
-        self.pymodes_stats.update(pymodes_data)
+        if not pymodes_data or not isinstance(pymodes_data, dict):
+            return  # Don't update with invalid data
+        
+        # Only update fields that exist and are valid
+        for key, value in pymodes_data.items():
+            if key in self.pymodes_stats and value is not None:
+                self.pymodes_stats[key] = value
+        
         self.pymodes_stats['last_stats_update'] = datetime.now()
         
         # Calculate CPR success rate
@@ -462,9 +487,17 @@ class ADSBDashboard:
     
     def update_source_stats(self, source_data: dict):
         """Update message source statistics"""
+        if not source_data or not isinstance(source_data, dict):
+            return  # Don't update with invalid data
+        
         # Track connection status changes
         old_connected = self.source_stats.get('sources_connected', 0)
-        self.source_stats.update(source_data)
+        
+        # Only update fields that exist and are valid
+        for key, value in source_data.items():
+            if key in self.source_stats and value is not None:
+                self.source_stats[key] = value
+        
         new_connected = self.source_stats.get('sources_connected', 0)
         
         if old_connected != new_connected:
@@ -1229,30 +1262,49 @@ class ADSBDashboard:
         input_thread = threading.Thread(target=self.handle_input, args=(stdscr,), daemon=True)
         input_thread.start()
         
+        # Track last successful draw to prevent flickering
+        last_successful_draw = True
+        
         while self.running:
             try:
-                stdscr.clear()
+                # Only clear screen if we're confident we can redraw everything
+                if last_successful_draw:
+                    stdscr.clear()
+                
                 height, width = stdscr.getmaxyx()
                 
-                # Draw dashboard components
-                data_start_y = self.draw_header(stdscr, height, width)
-                if not self.menu_active:
-                    if self.show_detailed_stats:
-                        stats_end_y = self.draw_detailed_stats(stdscr, data_start_y, height, width)
-                        error_end_y = self.draw_error_diagnostics(stdscr, stats_end_y, height, width)
-                        self.draw_aircraft_list(stdscr, error_end_y, height, width)
-                    elif self.show_waterfall:
-                        waterfall_end_y = self.draw_mini_waterfall(stdscr, data_start_y, height, width)
-                        self.draw_aircraft_list(stdscr, waterfall_end_y, height, width)
-                    else:
-                        self.draw_aircraft_list(stdscr, data_start_y, height, width)
-                self.draw_footer(stdscr, height, width)
+                # Draw dashboard components with error handling
+                try:
+                    data_start_y = self.draw_header(stdscr, height, width)
+                    if not self.menu_active:
+                        if self.show_detailed_stats:
+                            stats_end_y = self.draw_detailed_stats(stdscr, data_start_y, height, width)
+                            error_end_y = self.draw_error_diagnostics(stdscr, stats_end_y, height, width)
+                            self.draw_aircraft_list(stdscr, error_end_y, height, width)
+                        elif self.show_waterfall:
+                            waterfall_end_y = self.draw_mini_waterfall(stdscr, data_start_y, height, width)
+                            self.draw_aircraft_list(stdscr, waterfall_end_y, height, width)
+                        else:
+                            self.draw_aircraft_list(stdscr, data_start_y, height, width)
+                    self.draw_footer(stdscr, height, width)
+                    
+                    stdscr.refresh()
+                    last_successful_draw = True
+                    
+                except Exception as e:
+                    # If drawing fails, don't clear screen next time to prevent flickering
+                    last_successful_draw = False
+                    # Try to at least show an error message
+                    try:
+                        stdscr.addstr(0, 0, f"Display error: {str(e)[:width-1]}", curses.A_BOLD)
+                        stdscr.refresh()
+                    except:
+                        pass
                 
-                stdscr.refresh()
-                time.sleep(0.5)  # Refresh display twice per second
+                time.sleep(1.0)  # Refresh display once per second to reduce flickering
                 
             except curses.error:
-                pass
+                last_successful_draw = False
             except KeyboardInterrupt:
                 self.running = False
     
