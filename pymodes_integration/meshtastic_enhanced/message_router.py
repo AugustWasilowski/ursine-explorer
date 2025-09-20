@@ -479,6 +479,10 @@ class MessageRouter(MessageRouterInterface):
         """Force an immediate health check of all interfaces"""
         self._perform_health_checks()
     
+    def update_interface_health(self) -> None:
+        """Update interface health status - alias for force_health_check for compatibility"""
+        self.force_health_check()
+    
     def reset_statistics(self) -> None:
         """Reset all delivery statistics"""
         with self._lock:
