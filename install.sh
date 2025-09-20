@@ -1,21 +1,26 @@
 #!/bin/bash
-# Ursine Explorer Installation Script for Raspberry Pi
+# Ursine Explorer Installation Script for Raspberry Pi (Integrated pyModeS Version)
 
 set -e
 
-echo "🛩️ Installing Ursine Explorer..."
+echo "🛩️ Installing Ursine Explorer (Integrated pyModeS Version)..."
 
 # Update system
 echo "Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
-# Install HackRF and dump1090
-echo "Installing HackRF and dump1090..."
-sudo apt install -y hackrf libhackrf-dev python3 python3-pip
+# Install system dependencies
+echo "Installing system dependencies..."
+sudo apt install -y \
+    hackrf libhackrf-dev \
+    python3 python3-pip python3-venv python3-dev \
+    git build-essential pkg-config \
+    libusb-1.0-0-dev libncurses-dev libncurses5-dev \
+    curl wget netcat-openbsd \
+    libffi-dev libssl-dev
 
 # Install dump1090-fa (FlightAware version with HackRF support)
 echo "Installing dump1090-fa..."
-sudo apt install -y git build-essential pkg-config libusb-1.0-0-dev libncurses-dev libncurses5-dev
 
 # Clean up any existing dump1090 build
 rm -rf /tmp/dump1090
@@ -72,9 +77,39 @@ fi
 cd /
 rm -rf /tmp/dump1090
 
-# Install Python dependencies
-echo "Installing Python dependencies..."
-sudo apt install -y python3-requests python3-full python3-numpy python3-serial
+# Install Python dependencies (system packages first)
+echo "Installing Python system dependencies..."
+sudo apt install -y \
+    python3-requests \
+    python3-numpy \
+    python3-serial \
+    python3-setuptools \
+    python3-wheel
+
+# Install pip packages for pyModeS and additional dependencies
+echo "Installing Python pip dependencies..."
+sudo pip3 install --upgrade pip
+
+# Install pyModeS and related packages
+echo "Installing pyModeS and enhanced dependencies..."
+sudo pip3 install \
+    pyModeS \
+    numpy \
+    requests \
+    pyserial \
+    psutil \
+    typing-extensions
+
+# Verify pyModeS installation
+echo "Verifying pyModeS installation..."
+python3 -c "import pyModeS; print(f'✅ pyModeS version {pyModeS.__version__} installed successfully')" || {
+    echo "❌ pyModeS installation failed, trying alternative method..."
+    sudo pip3 install --no-cache-dir pyModeS
+    python3 -c "import pyModeS; print(f'✅ pyModeS version {pyModeS.__version__} installed successfully')" || {
+        echo "❌ pyModeS installation failed completely"
+        exit 1
+    }
+}
 
 # Create service user (optional, for security)
 if ! id "ursine" &>/dev/null; then
@@ -86,14 +121,51 @@ fi
 # Set up directories
 echo "Setting up directories..."
 sudo mkdir -p /opt/ursine-explorer
-sudo cp monitor.py /opt/ursine-explorer/
-sudo cp adsb_receiver.py /opt/ursine-explorer/
+sudo mkdir -p /opt/ursine-explorer/pymodes_integration
+
+# Copy integrated system files
+echo "Installing integrated system files..."
+sudo cp adsb_receiver_integrated.py /opt/ursine-explorer/
 sudo cp adsb_dashboard.py /opt/ursine-explorer/
-sudo cp start_ursine.sh /opt/ursine-explorer/
+sudo cp start_integrated_system.py /opt/ursine-explorer/
+sudo cp start_ursine_integrated.sh /opt/ursine-explorer/
+sudo cp migrate_to_integrated.py /opt/ursine-explorer/
+sudo cp validate_system.py /opt/ursine-explorer/
+sudo cp test_integration.py /opt/ursine-explorer/
 sudo cp config.json /opt/ursine-explorer/
-sudo chmod +x /opt/ursine-explorer/adsb_receiver.py
+
+# Copy legacy files for backward compatibility
+if [ -f "adsb_receiver.py" ]; then
+    sudo cp adsb_receiver.py /opt/ursine-explorer/
+fi
+if [ -f "monitor.py" ]; then
+    sudo cp monitor.py /opt/ursine-explorer/
+fi
+if [ -f "start_ursine.sh" ]; then
+    sudo cp start_ursine.sh /opt/ursine-explorer/
+fi
+
+# Copy pyModeS integration module
+echo "Installing pyModeS integration module..."
+sudo cp -r pymodes_integration/* /opt/ursine-explorer/pymodes_integration/
+
+# Copy documentation
+sudo cp INTEGRATION_COMPLETE.md /opt/ursine-explorer/
+sudo cp QUICK_START.md /opt/ursine-explorer/
+if [ -f "README.md" ]; then
+    sudo cp README.md /opt/ursine-explorer/
+fi
+
+# Set permissions
+sudo chmod +x /opt/ursine-explorer/adsb_receiver_integrated.py
 sudo chmod +x /opt/ursine-explorer/adsb_dashboard.py
-sudo chmod +x /opt/ursine-explorer/start_ursine.sh
+sudo chmod +x /opt/ursine-explorer/start_integrated_system.py
+sudo chmod +x /opt/ursine-explorer/start_ursine_integrated.sh
+sudo chmod +x /opt/ursine-explorer/migrate_to_integrated.py
+sudo chmod +x /opt/ursine-explorer/validate_system.py
+sudo chmod +x /opt/ursine-explorer/test_integration.py
+
+# Set ownership
 sudo chown -R ursine:ursine /opt/ursine-explorer
 
 # Check for existing services that might conflict
@@ -121,9 +193,42 @@ if systemctl is-active --quiet ursine-explorer; then
     sudo systemctl stop ursine-explorer
 fi
 
-# Install systemd service
-echo "Installing systemd service..."
-sudo cp ursine-explorer.service /etc/systemd/system/
+# Create updated systemd service for integrated system
+echo "Creating systemd service for integrated system..."
+sudo tee /etc/systemd/system/ursine-explorer.service > /dev/null <<EOF
+[Unit]
+Description=Ursine Explorer ADS-B Receiver (Integrated pyModeS Version)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ursine
+Group=ursine
+WorkingDirectory=/opt/ursine-explorer
+ExecStart=/usr/bin/python3 /opt/ursine-explorer/start_integrated_system.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ursine-explorer
+
+# Environment variables
+Environment=PYTHONPATH=/opt/ursine-explorer
+Environment=PYTHONUNBUFFERED=1
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ursine-explorer
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 sudo systemctl daemon-reload
 
 # Set up HackRF permissions
@@ -167,18 +272,77 @@ else
     echo "✅ Port 8080 is available"
 fi
 
+if netstat -tulpn 2>/dev/null | grep -q ":8081 "; then
+    echo "⚠️ Port 8081 is in use - this may cause conflicts"
+    echo "   Run: sudo ./kill_port.sh 8081"
+else
+    echo "✅ Port 8081 is available"
+fi
+
 # Check Python dependencies
-python3 -c "import requests, serial, numpy" 2>/dev/null && echo "✅ Python dependencies are available" || echo "⚠️ Some Python dependencies may be missing"
+echo "Verifying Python dependencies..."
+python3 -c "import requests, serial, numpy" 2>/dev/null && echo "✅ Basic Python dependencies are available" || echo "⚠️ Some basic Python dependencies may be missing"
+
+python3 -c "import pyModeS; print(f'✅ pyModeS {pyModeS.__version__} is available')" 2>/dev/null || echo "⚠️ pyModeS is not available"
+
+# Test integrated system import
+echo "Testing integrated system..."
+cd /opt/ursine-explorer
+sudo -u ursine python3 -c "
+import sys
+sys.path.append('/opt/ursine-explorer')
+try:
+    from adsb_receiver_integrated import IntegratedADSBServer
+    print('✅ Integrated system imports successfully')
+except Exception as e:
+    print(f'⚠️ Integrated system import failed: {e}')
+" 2>/dev/null || echo "⚠️ Integrated system test failed"
+
+# Run system validation
+echo "Running system validation..."
+cd /opt/ursine-explorer
+sudo -u ursine timeout 30 python3 validate_system.py --quick 2>/dev/null && echo "✅ System validation passed" || echo "⚠️ System validation had issues (check logs)"
 
 echo ""
-echo "✅ Installation complete!"
+echo "🎉 Installation complete!"
 echo ""
-echo "Next steps:"
-echo "1. Edit /opt/ursine-explorer/config.json with your target ICAO codes and Meshtastic settings"
-echo "2. Test the system: sudo -u ursine python3 /opt/ursine-explorer/adsb_receiver.py"
-echo "3. Enable the service: sudo systemctl enable ursine-explorer"
-echo "4. Start the service: sudo systemctl start ursine-explorer"
-echo "5. Check status: sudo systemctl status ursine-explorer"
-echo "6. View logs: sudo journalctl -u ursine-explorer -f"
+echo "=== INTEGRATED URSINE EXPLORER SYSTEM ==="
 echo ""
-echo "If you encounter port conflicts, run: sudo ./kill_port.sh [PORT]"
+echo "Quick Start:"
+echo "1. Edit configuration: sudo nano /opt/ursine-explorer/config.json"
+echo "2. Test the system: cd /opt/ursine-explorer && sudo -u ursine python3 start_integrated_system.py"
+echo "3. Enable service: sudo systemctl enable ursine-explorer"
+echo "4. Start service: sudo systemctl start ursine-explorer"
+echo ""
+echo "System Management:"
+echo "• Check status: sudo systemctl status ursine-explorer"
+echo "• View logs: sudo journalctl -u ursine-explorer -f"
+echo "• Stop service: sudo systemctl stop ursine-explorer"
+echo "• Restart service: sudo systemctl restart ursine-explorer"
+echo ""
+echo "Access Points:"
+echo "• HTTP API: http://localhost:8080/data/aircraft.json"
+echo "• Enhanced API: http://localhost:8080/data/aircraft_enhanced.json"
+echo "• System Status: http://localhost:8080/api/status"
+echo "• Health Check: http://localhost:8080/api/health"
+echo "• Control Interface: telnet localhost 8081"
+echo ""
+echo "Dashboard:"
+echo "• Run: cd /opt/ursine-explorer && python3 adsb_dashboard.py"
+echo "• Or auto-start: python3 start_integrated_system.py --dashboard"
+echo ""
+echo "Migration from Legacy System:"
+echo "• Run: cd /opt/ursine-explorer && python3 migrate_to_integrated.py"
+echo ""
+echo "Troubleshooting:"
+echo "• Validate system: cd /opt/ursine-explorer && python3 validate_system.py"
+echo "• Run tests: cd /opt/ursine-explorer && python3 test_integration.py"
+echo "• Check dependencies: python3 -c 'import pyModeS; print(pyModeS.__version__)'"
+echo ""
+echo "Documentation: /opt/ursine-explorer/INTEGRATION_COMPLETE.md"
+echo ""
+if [ -f "/opt/ursine-explorer/kill_port.sh" ]; then
+    echo "If you encounter port conflicts, run: sudo /opt/ursine-explorer/kill_port.sh [PORT]"
+else
+    echo "If you encounter port conflicts, kill processes manually: sudo lsof -ti:[PORT] | xargs sudo kill -9"
+fi

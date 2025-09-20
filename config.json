@@ -15,7 +15,6 @@
     "dump1090_path": "/usr/local/bin/dump1090",
     "watchdog_timeout_sec": 60,
     "poll_interval_sec": 1,
-    
     "pymodes": {
         "enabled": true,
         "reference_position": {
@@ -34,13 +33,19 @@
             "max_message_age_sec": 60
         },
         "decoder_settings": {
-            "supported_message_types": ["DF4", "DF5", "DF17", "DF18", "DF20", "DF21"],
+            "supported_message_types": [
+                "DF4",
+                "DF5",
+                "DF17",
+                "DF18",
+                "DF20",
+                "DF21"
+            ],
             "enable_enhanced_decoding": true,
             "decode_comm_b": true,
             "decode_bds": true
         }
     },
-    
     "message_sources": [
         {
             "name": "dump1090_primary",
@@ -54,7 +59,6 @@
             "buffer_size": 8192
         }
     ],
-    
     "aircraft_tracking": {
         "aircraft_timeout_sec": 300,
         "position_timeout_sec": 60,
@@ -65,10 +69,11 @@
         "track_surface_vehicles": true,
         "minimum_message_count": 2
     },
-    
     "watchlist": {
         "enabled": true,
-        "sources": ["target_icao_codes"],
+        "sources": [
+            "target_icao_codes"
+        ],
         "check_icao": true,
         "check_callsign": true,
         "case_sensitive": false,
@@ -80,7 +85,6 @@
             "escalation_enabled": false
         }
     },
-    
     "logging": {
         "level": "INFO",
         "enable_message_stats": true,
@@ -92,7 +96,6 @@
         "max_log_size_mb": 100,
         "backup_count": 5
     },
-    
     "performance": {
         "message_batch_size": 100,
         "processing_interval_ms": 100,
