@@ -44,3 +44,7 @@ Thumbs.db
 config.json.local
 adsb-monitor.log
 .kiro/
+pymodes_integration/
+
+./Agents.md
+Agents.md

@@ -1,0 +1,63 @@
+# Example systemd service files for Ursine Capture
+# These allow the system to start automatically on boot
+
+# File: /etc/systemd/system/ursine-receiver.service
+[Unit]
+Description=Ursine Capture ADS-B Receiver
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/ursine-capture
+ExecStart=/usr/bin/python3 /opt/ursine-capture/receiver.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables if needed
+Environment=PYTHONPATH=/opt/ursine-capture
+
+[Install]
+WantedBy=multi-user.target
+
+# File: /etc/systemd/system/ursine-dashboard.service
+[Unit]
+Description=Ursine Capture Dashboard
+After=ursine-receiver.service
+Wants=ursine-receiver.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/ursine-capture
+ExecStart=/usr/bin/python3 /opt/ursine-capture/dashboard.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Only start if receiver is running
+Requisite=ursine-receiver.service
+
+[Install]
+WantedBy=multi-user.target
+
+# Installation commands:
+# sudo cp ursine-receiver.service /etc/systemd/system/
+# sudo cp ursine-dashboard.service /etc/systemd/system/
+# sudo systemctl daemon-reload
+# sudo systemctl enable ursine-receiver
+# sudo systemctl enable ursine-dashboard
+# sudo systemctl start ursine-receiver
+# sudo systemctl start ursine-dashboard
+
+# Management commands:
+# sudo systemctl status ursine-receiver
+# sudo systemctl stop ursine-receiver
+# sudo systemctl restart ursine-receiver
+# journalctl -u ursine-receiver -f
