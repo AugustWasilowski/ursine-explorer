@@ -1,0 +1,35 @@
+{
+  "receiver": {
+    "dump1090_path": "/usr/bin/dump1090-fa",
+    "frequency": 1090000000,
+    "gain": 40,
+    "update_interval": 1.0,
+    "cleanup_interval": 30
+  },
+  "meshtastic": {
+    "enabled": true,
+    "port": "/dev/ttyUSB0",
+    "channel": 0,
+    "alert_cooldown": 300
+  },
+  "watchlist": {
+    "enabled": true,
+    "aircraft": [],
+    "alert_on_new": false
+  },
+  "dashboard": {
+    "update_interval": 0.5,
+    "max_aircraft_display": 50,
+    "show_ground": false
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "ursine-capture.log",
+    "max_size_mb": 10,
+    "backup_count": 3
+  },
+  "_hardware_detection": {
+    "hackrf_detected": false,
+    "meshtastic_ports": []
+  }
+}

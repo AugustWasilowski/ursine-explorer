@@ -42,7 +42,7 @@ def check_config():
     """Check if configuration file exists."""
     config_path = Path("config.json")
     if not config_path.exists():
-        print("✗ config.json not found. Run installer.py first or create manually.")
+        print("✗ config.json not found. Run ./install.sh first.")
         return False
     
     print("✓ Configuration file found")

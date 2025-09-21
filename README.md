@@ -15,18 +15,40 @@ Ursine Capture is a complete rewrite of the Ursine Explorer system, designed for
 
 ### 1. Installation
 
-Run the installer script to set up everything automatically:
+#### One-Command Installation
 
 ```bash
-python3 installer.py
+./install.sh
 ```
 
 The installer will:
-- Install all Python dependencies (pyModeS, etc.)
-- Set up dump1090-fa
+- Install all Python dependencies (pyModeS, psutil, meshtastic, etc.)
+- Set up dump1090-fa for ADS-B decoding
 - Configure HackRF drivers and permissions
-- Create initial configuration file
+- Create initial configuration file with hardware detection
 - Verify all components work
+
+#### Installation Options
+
+```bash
+./install.sh --test-mode        # Run without making system changes
+./install.sh --verify-only      # Only verify existing installation
+./install.sh --detect-hardware  # Only detect and report hardware
+```
+
+#### Manual Installation (if needed)
+
+```bash
+# Install system packages (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install python3 python3-pip dump1090-fa hackrf libhackrf-dev
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Add user to plugdev group for USB access
+sudo usermod -a -G plugdev $USER
+```
 
 ### 2. Basic Usage
 

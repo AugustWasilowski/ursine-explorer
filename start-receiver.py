@@ -14,10 +14,10 @@ from pathlib import Path
 def check_dependencies():
     """Check if required dependencies are available."""
     try:
-        import pymodes
+        import pyModeS
         print("✓ pyModeS available")
     except ImportError:
-        print("✗ pyModeS not found. Run installer.py first.")
+        print("✗ pyModeS not found. Run ./install.sh first.")
         return False
     
     # Check if dump1090 is available
@@ -35,7 +35,7 @@ def check_dependencies():
             break
     
     if not dump1090_found:
-        print("✗ dump1090-fa not found. Run installer.py first.")
+        print("✗ dump1090-fa not found. Run ./install.sh first.")
         return False
     
     return True
@@ -44,7 +44,7 @@ def check_config():
     """Check if configuration file exists."""
     config_path = Path("config.json")
     if not config_path.exists():
-        print("✗ config.json not found. Run installer.py first or create manually.")
+        print("✗ config.json not found. Run ./install.sh first.")
         return False
     
     print("✓ Configuration file found")

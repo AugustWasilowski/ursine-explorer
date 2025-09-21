@@ -1,4 +1,4 @@
-# pyModeS Integration Dependencies
+# Ursine Capture Dependencies
 # 
 # Installation instructions:
 # 1. Create virtual environment: python3 -m venv venv
@@ -8,11 +8,18 @@
 # Or install system-wide (if allowed):
 # pip install --break-system-packages -r requirements.txt
 
-pyModeS>=2.13.0
+# Core system dependencies
+psutil>=5.8.0
 numpy>=1.21.0
 requests>=2.25.0
+
+# ADS-B processing
+pyModeS>=2.13.0
+
+# Serial communication
 pyserial>=3.5
 
-# Enhanced Meshtastic Integration Dependencies
+# Meshtastic integration
+meshtastic>=2.0.0
 paho-mqtt>=1.6.0
 cryptography>=3.4.8
