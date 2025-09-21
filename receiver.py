@@ -584,7 +584,7 @@ class MeshtasticManager:
     def disconnect(self) -> None:
         """Disconnect from Meshtastic device."""
         try:
-            if self.serial_connection:
+            if hasattr(self, 'serial_connection') and self.serial_connection:
                 self.serial_connection.close()
                 self.serial_connection = None
             self.connected = False
@@ -959,8 +959,10 @@ class ADSBReceiver:
                 return
                 
             # Connect to Meshtastic
-            if not self.meshtastic_manager.connect():
+            if self.meshtastic_manager and not self.meshtastic_manager.connect():
                 logger.warning("Meshtastic connection failed, continuing without alerts")
+            elif not self.meshtastic_manager:
+                logger.warning("Meshtastic not available, continuing without alerts")
             
             # Start processing
             self.running = True
@@ -1003,7 +1005,8 @@ class ADSBReceiver:
         self.dump1090_manager.stop_dump1090()
         
         # Disconnect Meshtastic
-        self.meshtastic_manager.disconnect()
+        if self.meshtastic_manager:
+            self.meshtastic_manager.disconnect()
         
         logger.info("Receiver stopped")
     
@@ -1418,9 +1421,11 @@ class ADSBReceiver:
             }
             
             # Send alert and mark as alerted if successful
-            if self.meshtastic_manager.send_alert(aircraft_data):
+            if self.meshtastic_manager and self.meshtastic_manager.send_alert(aircraft_data):
                 aircraft.mark_watchlist_alerted()
                 logger.info(f"Watchlist alert sent for {aircraft.icao} (alert #{aircraft.watchlist_alert_count})")
+            elif not self.meshtastic_manager:
+                logger.debug(f"Meshtastic not available, skipping alert for {aircraft.icao}")
             else:
                 logger.warning(f"Failed to send watchlist alert for {aircraft.icao}")
             
@@ -1436,7 +1441,7 @@ class ADSBReceiver:
                 
                 # Get comprehensive health status
                 health_status = self.dump1090_manager.get_health_status()
-                meshtastic_status = self.meshtastic_manager.get_health_status()
+                meshtastic_status = self.meshtastic_manager.get_health_status() if self.meshtastic_manager else {"status": "UNAVAILABLE", "details": "Not initialized"}
                 
                 # Get message statistics
                 message_stats = self.get_message_statistics()
@@ -1527,7 +1532,7 @@ class ADSBReceiver:
                     logger.warning("Failed to restart dump1090/HackRF")
                 
                 # Check and reconnect Meshtastic if needed
-                if not self.meshtastic_manager.reconnect_if_needed():
+                if self.meshtastic_manager and not self.meshtastic_manager.reconnect_if_needed():
                     logger.debug("Meshtastic reconnection not needed or failed")
                     
             except Exception as e:
@@ -1648,7 +1653,14 @@ class ADSBReceiver:
         self.config = Config(config_path)
         self.aircraft_tracker = AircraftTracker()
         self.dump1090_manager = Dump1090Manager(self.config)
-        self.meshtastic_manager = MeshtasticManager(self.config)
+        
+        # Initialize Meshtastic manager with error handling
+        try:
+            self.meshtastic_manager = MeshtasticManager(self.config)
+        except Exception as e:
+            logger.error(f"Failed to initialize MeshtasticManager: {e}")
+            # Create a dummy manager to prevent attribute errors
+            self.meshtastic_manager = None
         
         # Status tracking
         self.running = False
@@ -1751,7 +1763,8 @@ class ADSBReceiver:
             
             # Stop managers
             self.dump1090_manager.stop_dump1090()
-            self.meshtastic_manager.disconnect()
+            if self.meshtastic_manager:
+                self.meshtastic_manager.disconnect()
             
             # Stop configuration watching
             self.config.stop_watching()
@@ -1837,8 +1850,10 @@ class ADSBReceiver:
         """Initialize Meshtastic connection (non-blocking)."""
         try:
             # Attempt connection but don't fail if it doesn't work
-            if self.meshtastic_manager.connect():
+            if self.meshtastic_manager and self.meshtastic_manager.connect():
                 logger.info("Meshtastic initialized successfully")
+            elif not self.meshtastic_manager:
+                logger.info("Meshtastic not available")
             else:
                 error_handler.handle_error(
                     ComponentType.MESHTASTIC,
@@ -1936,7 +1951,8 @@ class ADSBReceiver:
                 self.consecutive_errors = 0
             
             # Check Meshtastic health
-            self.meshtastic_manager.reconnect_if_needed()
+            if self.meshtastic_manager:
+                self.meshtastic_manager.reconnect_if_needed()
             
             # Check message processing health
             message_age = (datetime.now() - self.last_successful_message).total_seconds()
@@ -2149,9 +2165,11 @@ class ADSBReceiver:
                 'alert_count': aircraft.watchlist_alert_count + 1
             }
             
-            if self.meshtastic_manager.send_alert(alert_data):
+            if self.meshtastic_manager and self.meshtastic_manager.send_alert(alert_data):
                 aircraft.mark_watchlist_alerted()
                 logger.info(f"Watchlist alert sent for {aircraft.icao}")
+            elif not self.meshtastic_manager:
+                logger.debug(f"Meshtastic not available, skipping alert for {aircraft.icao}")
             
         except Exception as e:
             error_handler.handle_error(
@@ -2169,7 +2187,7 @@ class ADSBReceiver:
             
             # Get comprehensive system status
             dump1090_health = self.dump1090_manager.get_health_status()
-            meshtastic_health = self.meshtastic_manager.get_health_status()
+            meshtastic_health = self.meshtastic_manager.get_health_status() if self.meshtastic_manager else {"status": "UNAVAILABLE", "details": "Not initialized"}
             error_summary = error_handler.get_error_summary()
             
             # Update status.json with comprehensive information
@@ -2177,7 +2195,7 @@ class ADSBReceiver:
                 "receiver_running": self.running,
                 "dump1090_running": self.dump1090_manager.is_running(),
                 "hackrf_connected": self.dump1090_manager.hackrf_connected,
-                "meshtastic_connected": self.meshtastic_manager.is_connected(),
+                "meshtastic_connected": self.meshtastic_manager.is_connected() if self.meshtastic_manager else False,
                 "aircraft_count": self.aircraft_tracker.get_aircraft_count(),
                 "watchlist_count": len(self.config.get_watchlist()),
                 "uptime": str(datetime.now() - self.start_time),
@@ -2252,7 +2270,7 @@ class ADSBReceiver:
     
     def _recover_meshtastic(self, error: 'SystemError') -> bool:
         """Recover Meshtastic connection."""
-        return self.meshtastic_manager.connect()
+        return self.meshtastic_manager.connect() if self.meshtastic_manager else False
 
 
 # Global receiver instance for signal handling

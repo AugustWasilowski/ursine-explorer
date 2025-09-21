@@ -290,6 +290,23 @@ class Config:
         """Get Meshtastic configuration as dataclass."""
         config = self.load()
         meshtastic_data = config.get('meshtastic', {})
+        
+        # Handle legacy config format where meshtastic settings are at root level
+        if not meshtastic_data and 'meshtastic_port' in config:
+            meshtastic_data = {
+                'port': config.get('meshtastic_port', '/dev/ttyUSB0'),
+                'baud': config.get('meshtastic_baud', 115200),
+                'channel': config.get('meshtastic_channel', 2)
+            }
+        
+        # Handle parameter name mapping (meshtastic_port -> port)
+        if 'meshtastic_port' in meshtastic_data:
+            meshtastic_data['port'] = meshtastic_data.pop('meshtastic_port')
+        if 'meshtastic_baud' in meshtastic_data:
+            meshtastic_data['baud'] = meshtastic_data.pop('meshtastic_baud')
+        if 'meshtastic_channel' in meshtastic_data:
+            meshtastic_data['channel'] = meshtastic_data.pop('meshtastic_channel')
+            
         return MeshtasticConfig(**meshtastic_data)
     
     def get_receiver_config(self) -> ReceiverConfig:

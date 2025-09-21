@@ -1,0 +1,31 @@
+{
+  "receiver_running": false,
+  "dump1090_running": false,
+  "hackrf_connected": false,
+  "meshtastic_connected": false,
+  "aircraft_count": 0,
+  "watchlist_count": 0,
+  "uptime": "0:00:00",
+  "message_rate": 0.0,
+  "total_messages": 0,
+  "consecutive_errors": 0,
+  "recovery_attempts": 0,
+  "last_successful_message": "2025-09-21T00:00:00",
+  "dump1090_health": {
+    "status": "UNKNOWN",
+    "details": "Not started"
+  },
+  "meshtastic_health": {
+    "status": "UNKNOWN", 
+    "details": "Not started"
+  },
+  "error_summary": {
+    "total_errors": 0,
+    "critical_errors": 0,
+    "recent_errors": 0
+  },
+  "recent_errors": [],
+  "critical_errors": [],
+  "system_health": "UNKNOWN",
+  "last_update": "2025-09-21T00:00:00"
+}
