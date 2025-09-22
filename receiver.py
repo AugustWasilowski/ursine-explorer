@@ -343,6 +343,8 @@ class Dump1090Manager:
             "--net",
             "--net-sbs-port", "30003",
             "--net-bi-port", str(dump1090_port),
+            "--net-http-port", "8080",  # Enable HTTP API for FFT data
+            "--write-json", "/tmp",     # Write JSON files including FFT data
             "--quiet"
         ]
         
