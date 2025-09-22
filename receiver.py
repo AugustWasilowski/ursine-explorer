@@ -986,6 +986,8 @@ class ADSBReceiver:
             cleanup_thread.start()
             health_thread.start()
             
+            logger.info("All background threads started")
+            
             logger.info("Receiver started successfully")
             
             # Main loop
@@ -1997,6 +1999,9 @@ class ADSBReceiver:
     def _main_loop(self) -> None:
         """Main processing loop with health monitoring."""
         try:
+            last_status_update = 0
+            status_update_interval = 5  # Update status every 5 seconds
+            
             while self.running:
                 current_time = time.time()
                 
@@ -2005,8 +2010,10 @@ class ADSBReceiver:
                     self._perform_health_checks()
                     self.last_health_check = current_time
                 
-                # Update status files
-                self._update_status_files()
+                # Update status files periodically
+                if current_time - last_status_update > status_update_interval:
+                    self._update_status_files()
+                    last_status_update = current_time
                 
                 # Sleep briefly
                 time.sleep(1)
@@ -2367,6 +2374,20 @@ def signal_handler(signum, frame):
     logger.info("Graceful shutdown complete")
     sys.exit(0)
 
+
+def safe_int(value):
+    """Safely convert value to int."""
+    try:
+        return int(value) if value and value.strip() else None
+    except (ValueError, AttributeError):
+        return None
+
+def safe_float(value):
+    """Safely convert value to float."""
+    try:
+        return float(value) if value and value.strip() else None
+    except (ValueError, AttributeError):
+        return None
 
 def main():
     """Main receiver entry point with comprehensive error handling and recovery."""

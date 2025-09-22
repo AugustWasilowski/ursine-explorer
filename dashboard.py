@@ -1635,7 +1635,7 @@ class Dashboard:
         self.aircraft_data = {}
         self.status_data = {}
         self.last_update = datetime.now()
-        self.update_interval = 0.1  # 100ms refresh rate
+        self.update_interval = 0.2  # 200ms refresh rate (5 FPS)
         
         # Aircraft display settings
         self.sort_column = 'icao'  # Default sort column
@@ -1670,6 +1670,9 @@ class Dashboard:
             
             self.running = True
             last_refresh = time.time()
+            last_data_load = 0
+            data_load_interval = 1.0  # Load data every 1 second
+            needs_redraw = True
             
             while self.running:
                 try:
@@ -1679,14 +1682,18 @@ class Dashboard:
                     if self._check_screen_resize(screen):
                         self._update_screen_dimensions(screen)
                         self.waterfall = WaterfallDisplay(self.screen_width - 4, self.waterfall_height)
+                        needs_redraw = True
                     
-                    # Only refresh screen at specified interval
-                    if current_time - last_refresh >= self.update_interval:
+                    # Load data less frequently
+                    if current_time - last_data_load >= data_load_interval:
+                        self.load_data()
+                        last_data_load = current_time
+                        needs_redraw = True
+                    
+                    # Only refresh screen when needed and at specified interval
+                    if needs_redraw and (current_time - last_refresh >= self.update_interval):
                         # Clear screen
                         screen.clear()
-                        
-                        # Load latest data
-                        self.load_data()
                         
                         # Draw UI components in order
                         self.draw_header(screen)
@@ -1700,15 +1707,18 @@ class Dashboard:
                         
                         screen.refresh()
                         last_refresh = current_time
+                        needs_redraw = False
                     
                     # Handle input (non-blocking)
+                    screen.timeout(50)  # 50ms timeout
                     key = screen.getch()
                     if key != -1:  # Key was pressed
                         if not self.handle_input(screen, key):
                             break
+                        needs_redraw = True  # Redraw after input
                     
                     # Small sleep to prevent excessive CPU usage
-                    time.sleep(0.01)
+                    time.sleep(0.02)
                     
                 except curses.error:
                     # Ignore curses drawing errors (usually screen size issues)
@@ -1724,7 +1734,8 @@ class Dashboard:
         try:
             curses.curs_set(0)  # Hide cursor
             screen.nodelay(1)   # Non-blocking input
-            screen.timeout(10)  # 10ms timeout for getch()
+            screen.timeout(50)  # 50ms timeout for getch()
+            screen.keypad(1)    # Enable keypad mode for arrow keys
             
             # Initialize colors if supported
             if curses.has_colors():
@@ -2527,17 +2538,24 @@ class Dashboard:
             elif key == 27:  # ESC key
                 return True  # Just refresh screen
             elif key == ord('m') or key == ord('M'):
-                action = self.menu_system.show_main_menu(screen)
-                if action == "quit":
-                    return False
-                elif action == "radio":
-                    self.menu_system.show_radio_menu(screen)
-                elif action == "watchlist":
-                    self.menu_system.show_watchlist_menu(screen)
-                elif action == "status":
-                    self.show_detailed_status(screen)
-                # Redraw screen after menu
+                # Disable timeout for menu interaction
+                screen.timeout(-1)
+                try:
+                    action = self.menu_system.show_main_menu(screen)
+                    if action == "quit":
+                        return False
+                    elif action == "radio":
+                        self.menu_system.show_radio_menu(screen)
+                    elif action == "watchlist":
+                        self.menu_system.show_watchlist_menu(screen)
+                    elif action == "status":
+                        self.show_detailed_status(screen)
+                finally:
+                    # Re-enable timeout after menu
+                    screen.timeout(50)
+                # Force full redraw after menu
                 screen.clear()
+                screen.refresh()
             
             # Navigation keys
             elif key == curses.KEY_UP or key == ord('k'):
@@ -2602,20 +2620,40 @@ class Dashboard:
             # Menu shortcuts
             elif key == ord('w') or key == ord('W'):
                 # Quick watchlist menu
-                self.menu_system.show_watchlist_menu(screen)
+                screen.timeout(-1)
+                try:
+                    self.menu_system.show_watchlist_menu(screen)
+                finally:
+                    screen.timeout(50)
                 screen.clear()
+                screen.refresh()
             elif key == ord('r') or key == ord('R'):
                 # Quick radio menu
-                self.menu_system.show_radio_menu(screen)
+                screen.timeout(-1)
+                try:
+                    self.menu_system.show_radio_menu(screen)
+                finally:
+                    screen.timeout(50)
                 screen.clear()
+                screen.refresh()
             elif key == ord('s') or key == ord('S'):
                 # Quick status display
-                self.show_detailed_status(screen)
+                screen.timeout(-1)
+                try:
+                    self.show_detailed_status(screen)
+                finally:
+                    screen.timeout(50)
                 screen.clear()
+                screen.refresh()
             elif key == ord('?') or key == ord('h'):
                 # Show help
-                self._show_help(screen)
+                screen.timeout(-1)
+                try:
+                    self._show_help(screen)
+                finally:
+                    screen.timeout(50)
                 screen.clear()
+                screen.refresh()
             elif key == ord('f') or key == ord('F'):
                 # Force refresh
                 self.load_data()
