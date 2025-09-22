@@ -335,6 +335,8 @@ class Dump1090Manager:
         config_data = self.config.load()
         dump1090_port = config_data.get('dump1090_port', 30005)
         logger.info(f"DEBUG: dump1090_port = {dump1090_port}, config_data = {config_data.get('dump1090_port', 'NOT_SET')}")
+        logger.info(f"DEBUG: Full config_data keys: {list(config_data.keys())}")
+        logger.info(f"DEBUG: Config file path: {self.config.config_path}")
         
         cmd = [
             self.receiver_config.dump1090_path,

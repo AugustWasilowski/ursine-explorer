@@ -1,11 +1,13 @@
 {
   "receiver": {
-    "dump1090_path": "/usr/bin/dump1090-fa",
+    "dump1090_path": "/usr/local/bin/dump1090",
     "frequency": 1090000000,
     "gain": 40,
     "update_interval": 1.0,
     "cleanup_interval": 30
   },
+  "dump1090_port": 30005,
+  "dump1090_port": 30005,
   "meshtastic": {
     "enabled": true,
     "port": "/dev/ttyUSB0",
