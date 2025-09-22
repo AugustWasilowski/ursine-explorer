@@ -105,13 +105,27 @@ class WaterfallDisplay:
         """Fetch FFT data from dump1090 HTTP API."""
         try:
             import requests
-            url = "http://localhost:8080/data/fft.json"
-            response = requests.get(url, timeout=0.5)
             
-            if response.status_code == 200:
-                data = response.json()
-                if 'fft_data' in data and data['fft_data']:
-                    return data['fft_data']
+            # Try multiple possible FFT endpoints
+            fft_urls = [
+                "http://localhost:8080/data/fft.json",
+                "http://localhost:8080/data/spectrum.json", 
+                "http://localhost:8080/fft.json",
+                "http://localhost:8080/spectrum.json"
+            ]
+            
+            for url in fft_urls:
+                try:
+                    response = requests.get(url, timeout=0.5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Try different possible field names
+                        for field in ['fft_data', 'spectrum', 'data', 'fft']:
+                            if field in data and data[field]:
+                                logger.debug(f"Found FFT data at {url} in field '{field}'")
+                                return data[field]
+                except Exception:
+                    continue
                     
         except Exception:
             pass  # Silently fail and try next source
@@ -124,24 +138,35 @@ class WaterfallDisplay:
             import os
             import numpy as np
             
-            fft_file = "/tmp/adsb_fft.dat"
+            # Try multiple possible FFT file locations
+            fft_files = [
+                "/tmp/adsb_fft.dat",
+                "/tmp/fft.dat", 
+                "/tmp/dump1090_fft.dat",
+                "/tmp/spectrum.dat"
+            ]
             
-            if not os.path.exists(fft_file):
-                return None
-            
-            file_size = os.path.getsize(fft_file)
-            if file_size < self.fft_size * 4:
-                return None
-            
-            with open(fft_file, 'rb') as f:
-                f.seek(-self.fft_size * 4, 2)  # Seek to last FFT frame
-                data = np.frombuffer(f.read(self.fft_size * 4), dtype=np.float32)
+            for fft_file in fft_files:
+                if not os.path.exists(fft_file):
+                    continue
                 
-                if len(data) == self.fft_size:
-                    # Convert to dB and shift
-                    data = np.maximum(data, 1e-12)  # Avoid log(0)
-                    db_data = 10 * np.log10(data)
-                    return np.fft.fftshift(db_data).tolist()
+                file_size = os.path.getsize(fft_file)
+                if file_size < self.fft_size * 4:
+                    continue
+                
+                try:
+                    with open(fft_file, 'rb') as f:
+                        f.seek(-self.fft_size * 4, 2)  # Seek to last FFT frame
+                        data = np.frombuffer(f.read(self.fft_size * 4), dtype=np.float32)
+                        
+                        if len(data) == self.fft_size:
+                            # Convert to dB and shift
+                            data = np.maximum(data, 1e-12)  # Avoid log(0)
+                            db_data = 10 * np.log10(data)
+                            logger.debug(f"Found FFT data in file {fft_file}")
+                            return np.fft.fftshift(db_data).tolist()
+                except Exception:
+                    continue
                     
         except Exception:
             pass  # Silently fail and try next source

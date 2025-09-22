@@ -342,9 +342,8 @@ class Dump1090Manager:
             "--freq", str(self.radio_config.frequency),
             "--net",
             "--net-sbs-port", "30003",
-            "--net-bi-port", str(dump1090_port),
-            "--net-http-port", "8080",  # Enable HTTP API for FFT data
-            "--write-json", "/tmp",     # Write JSON files including FFT data
+            "--net-bo-port", str(dump1090_port),  # Beast OUTPUT port (not input)
+            "--write-json", "/tmp",     # Write JSON files
             "--quiet"
         ]
         
