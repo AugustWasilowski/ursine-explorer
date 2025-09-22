@@ -1,18 +1,38 @@
 {
   "receiver": {
     "dump1090_path": "/usr/local/bin/dump1090",
-    "frequency": 1090000000,
-    "gain": 40,
     "update_interval": 1.0,
     "cleanup_interval": 30
   },
-  "dump1090_port": 30005,
+  "radio": {
+    "frequency": 1090100000,
+    "lna_gain": 40,
+    "vga_gain": 20,
+    "enable_amp": true
+  },
   "dump1090_port": 30005,
   "meshtastic": {
     "enabled": true,
     "port": "/dev/ttyUSB0",
-    "channel": 0,
-    "alert_cooldown": 300
+    "channel": 2,
+    "alert_cooldown": 300,
+    "channels": [
+      {
+        "name": "LongFast",
+        "psk": null,
+        "channel_number": 0,
+        "uplink_enabled": true,
+        "downlink_enabled": true
+      },
+      {
+        "name": "UrsineAlerts",
+        "psk": "HR6Eq+6gkccIdwYl3817GA==",
+        "channel_number": 2,
+        "uplink_enabled": true,
+        "downlink_enabled": true
+      }
+    ],
+    "default_channel": "UrsineAlerts"
   },
   "watchlist": {
     "enabled": true,
