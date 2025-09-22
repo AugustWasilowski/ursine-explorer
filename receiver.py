@@ -920,7 +920,13 @@ class ADSBReceiver:
         self.config = Config(config_path)
         self.aircraft_tracker = AircraftTracker()
         self.dump1090_manager = Dump1090Manager(self.config)
-        self.meshtastic_manager = MeshtasticManager(self.config)
+        
+        # Initialize Meshtastic manager with error handling
+        try:
+            self.meshtastic_manager = MeshtasticManager(self.config)
+        except Exception as e:
+            logger.error(f"Failed to initialize MeshtasticManager: {e}")
+            self.meshtastic_manager = None
         
         self.running = False
         self.stop_event = Event()
@@ -939,6 +945,23 @@ class ADSBReceiver:
         # Position message cache for CPR decoding
         self.position_cache = {}  # icao -> [even_msg, odd_msg]
         self.position_cache_timeout = 10  # seconds
+        
+        # TCP connection attributes (needed by error recovery)
+        self.tcp_socket = None
+        self.processing_thread = None
+        
+        # Error tracking
+        self.consecutive_errors = 0
+        self.max_consecutive_errors = 10
+        self.last_successful_message = datetime.now()
+        
+        # Recovery tracking
+        self.recovery_attempts = 0
+        self.max_recovery_attempts = 5
+        self.last_recovery_attempt = 0
+        self.recovery_cooldown = 60  # seconds
+        self.last_health_check = 0
+        self.health_check_interval = 30  # seconds
         
     def start(self) -> None:
         """Start the receiver system."""
@@ -1721,6 +1744,63 @@ class ADSBReceiver:
         except Exception as e:
             logger.error(f"Error getting radio settings: {e}")
             return {}
+    
+    def _connect_to_dump1090(self) -> bool:
+        """Connect to dump1090 TCP stream with error handling."""
+        try:
+            if self.tcp_socket:
+                self.tcp_socket.close()
+            
+            # Get configured port
+            config_data = self.config.load()
+            dump1090_port = config_data.get('dump1090_port', 30003)  # Use SBS port by default
+            
+            self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_socket.settimeout(5.0)
+            self.tcp_socket.connect(("localhost", dump1090_port))
+            self.tcp_socket.settimeout(1.0)  # Shorter timeout for reads
+            
+            logger.info(f"Connected to dump1090 TCP stream on port {dump1090_port}")
+            return True
+            
+        except Exception as e:
+            error_handler.handle_error(
+                ComponentType.RECEIVER,
+                ErrorSeverity.HIGH,
+                f"Failed to connect to dump1090 TCP stream: {str(e)}",
+                error_code="TCP_CONNECTION_FAILED"
+            )
+            return False
+    
+    def _update_status_files(self) -> None:
+        """Update status.json and aircraft.json files."""
+        try:
+            # Update aircraft.json
+            self.aircraft_tracker.save_to_json("aircraft.json")
+            
+            # Get system status
+            dump1090_health = self.dump1090_manager.get_health_status()
+            meshtastic_health = self.meshtastic_manager.get_health_status() if self.meshtastic_manager else {"connected": False}
+            
+            # Update status.json
+            status_data = {
+                "receiver_running": self.running,
+                "dump1090_running": self.dump1090_manager.is_running(),
+                "hackrf_connected": self.dump1090_manager.hackrf_connected,
+                "meshtastic_connected": meshtastic_health.get('connected', False),
+                "aircraft_count": self.aircraft_tracker.get_aircraft_count(),
+                "watchlist_count": len(self.config.get_watchlist()),
+                "uptime": str(datetime.now() - self.start_time),
+                "message_rate": self.get_message_rate(),
+                "total_messages": self.message_count,
+                "last_update": datetime.now().isoformat()
+            }
+            
+            with open("status.json", 'w') as f:
+                json.dump(status_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Error updating status files: {e}")
 
 
 # Remove duplicate class - using the first ADSBReceiver class instead
