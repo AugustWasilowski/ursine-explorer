@@ -314,13 +314,26 @@ class Config:
         radio_data = config.get('radio', {})
         
         # Handle legacy config format where radio settings are at root level
-        if not radio_data:
-            radio_data = {
-                'frequency': config.get('frequency', 1090000000),
-                'lna_gain': config.get('lna_gain', 40),
-                'vga_gain': config.get('vga_gain', 20),
-                'enable_amp': config.get('enable_hackrf_amp', True)
-            }
+        # Always check root level and override radio section if values exist there
+        if 'frequency' in config:
+            radio_data['frequency'] = config['frequency']
+        elif 'frequency' not in radio_data:
+            radio_data['frequency'] = 1090000000
+            
+        if 'lna_gain' in config:
+            radio_data['lna_gain'] = config['lna_gain']
+        elif 'lna_gain' not in radio_data:
+            radio_data['lna_gain'] = 40
+            
+        if 'vga_gain' in config:
+            radio_data['vga_gain'] = config['vga_gain']
+        elif 'vga_gain' not in radio_data:
+            radio_data['vga_gain'] = 20
+            
+        if 'enable_hackrf_amp' in config:
+            radio_data['enable_amp'] = config['enable_hackrf_amp']
+        elif 'enable_amp' not in radio_data:
+            radio_data['enable_amp'] = True
         
         return RadioConfig(**radio_data)
     
@@ -361,21 +374,36 @@ class Config:
         receiver_data = config.get('receiver', {})
         
         # Handle legacy config format where receiver settings are at root level
-        if not receiver_data:
-            receiver_data = {
-                'dump1090_path': config.get('dump1090_path', '/usr/bin/dump1090-fa'),
-                'reference_lat': config.get('reference_lat', 41.9481),
-                'reference_lon': config.get('reference_lon', -87.6555),
-                'alert_interval': config.get('alert_interval_sec', 300)
-            }
+        # Always check root level and override receiver section if values exist there
+        if 'dump1090_path' in config:
+            receiver_data['dump1090_path'] = config['dump1090_path']
+        elif 'dump1090_path' not in receiver_data:
+            receiver_data['dump1090_path'] = '/usr/bin/dump1090-fa'
             
-            # Also check pymodes section for reference position
-            pymodes = config.get('pymodes', {})
-            if pymodes:
-                ref_pos = pymodes.get('reference_position', {})
-                if ref_pos:
-                    receiver_data['reference_lat'] = ref_pos.get('latitude', receiver_data['reference_lat'])
-                    receiver_data['reference_lon'] = ref_pos.get('longitude', receiver_data['reference_lon'])
+        if 'reference_lat' in config:
+            receiver_data['reference_lat'] = config['reference_lat']
+        elif 'reference_lat' not in receiver_data:
+            receiver_data['reference_lat'] = 41.9481
+            
+        if 'reference_lon' in config:
+            receiver_data['reference_lon'] = config['reference_lon']
+        elif 'reference_lon' not in receiver_data:
+            receiver_data['reference_lon'] = -87.6555
+            
+        if 'alert_interval_sec' in config:
+            receiver_data['alert_interval'] = config['alert_interval_sec']
+        elif 'alert_interval' not in receiver_data:
+            receiver_data['alert_interval'] = 300
+            
+        # Also check pymodes section for reference position (highest priority)
+        pymodes = config.get('pymodes', {})
+        if pymodes:
+            ref_pos = pymodes.get('reference_position', {})
+            if ref_pos:
+                if 'latitude' in ref_pos:
+                    receiver_data['reference_lat'] = ref_pos['latitude']
+                if 'longitude' in ref_pos:
+                    receiver_data['reference_lon'] = ref_pos['longitude']
         
         return ReceiverConfig(**receiver_data)
     

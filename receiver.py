@@ -331,6 +331,10 @@ class Dump1090Manager:
     
     def _build_dump1090_command(self) -> list:
         """Build dump1090 command line with current settings."""
+        # Get configured port from config
+        config_data = self.config.load()
+        dump1090_port = config_data.get('dump1090_port', 30005)
+        
         cmd = [
             self.receiver_config.dump1090_path,
             "--device-type", "hackrf",
@@ -338,7 +342,7 @@ class Dump1090Manager:
             "--freq", str(self.radio_config.frequency),
             "--net",
             "--net-sbs-port", "30003",
-            "--net-bi-port", "30005",
+            "--net-bi-port", str(dump1090_port),
             "--quiet"
         ]
         
@@ -1030,9 +1034,13 @@ class ADSBReceiver:
                         continue
                 
                 # Connect to dump1090 TCP stream
+                # Get configured port
+                config_data = self.config.load()
+                dump1090_port = config_data.get('dump1090_port', 30005)
+                
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(10.0)  # Longer timeout for connection
-                    sock.connect(('localhost', 30005))
+                    sock.connect(('localhost', dump1090_port))
                     
                     logger.info(f"Connected to dump1090 data stream (attempt {connection_attempts})")
                     connection_attempts = 0  # Reset on successful connection
@@ -1073,7 +1081,9 @@ class ADSBReceiver:
                             break
                             
             except ConnectionRefusedError:
-                logger.error("Connection refused by dump1090 (port 30005)")
+                config_data = self.config.load()
+                dump1090_port = config_data.get('dump1090_port', 30005)
+                logger.error(f"Connection refused by dump1090 (port {dump1090_port})")
                 if connection_attempts >= max_connection_attempts:
                     logger.error(f"Failed to connect after {max_connection_attempts} attempts")
                     break
@@ -1898,9 +1908,13 @@ class ADSBReceiver:
             if self.tcp_socket:
                 self.tcp_socket.close()
             
+            # Get configured port
+            config_data = self.config.load()
+            dump1090_port = config_data.get('dump1090_port', 30005)
+            
             self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_socket.settimeout(5.0)
-            self.tcp_socket.connect(("localhost", 30005))
+            self.tcp_socket.connect(("localhost", dump1090_port))
             self.tcp_socket.settimeout(1.0)  # Shorter timeout for reads
             
             logger.info("Connected to dump1090 TCP stream")
