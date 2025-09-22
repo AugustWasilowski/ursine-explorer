@@ -1723,49 +1723,7 @@ class ADSBReceiver:
             return {}
 
 
-class ADSBReceiver:
-    """Main ADS-B receiver application with comprehensive error handling and recovery."""
-    
-    def __init__(self, config_path: str = "config.json"):
-        self.config = Config(config_path)
-        self.aircraft_tracker = AircraftTracker()
-        self.dump1090_manager = Dump1090Manager(self.config)
-        
-        # Initialize Meshtastic manager with error handling
-        try:
-            self.meshtastic_manager = MeshtasticManager(self.config)
-        except Exception as e:
-            logger.error(f"Failed to initialize MeshtasticManager: {e}")
-            # Create a dummy manager to prevent attribute errors
-            self.meshtastic_manager = None
-        
-        # Status tracking
-        self.running = False
-        self.start_time = datetime.now()
-        self.last_health_check = 0
-        self.health_check_interval = 30  # seconds
-        
-        # Message processing
-        self.message_processor = None
-        self.tcp_socket = None
-        self.processing_thread = None
-        self.stop_event = Event()
-        
-        # Error tracking
-        self.consecutive_errors = 0
-        self.max_consecutive_errors = 10
-        self.last_successful_message = datetime.now()
-        
-        # Recovery tracking
-        self.recovery_attempts = 0
-        self.max_recovery_attempts = 5
-        self.last_recovery_attempt = 0
-        self.recovery_cooldown = 60  # seconds
-        
-        # Register error recovery strategies
-        self._register_recovery_strategies()
-        
-        logger.info("ADSBReceiver initialized")
+# Remove duplicate class - using the first ADSBReceiver class instead
     
     def _register_recovery_strategies(self) -> None:
         """Register automatic recovery strategies for different error types."""
@@ -2418,6 +2376,7 @@ def main():
                 start_attempt += 1
                 logger.info(f"Starting receiver (attempt {start_attempt}/{max_start_attempts})")
                 
+                # Use the first ADSBReceiver class (the complete one)
                 _receiver_instance = ADSBReceiver(config_path)
                 
                 if _receiver_instance.start():
