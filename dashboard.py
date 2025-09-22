@@ -70,6 +70,7 @@ class WaterfallDisplay:
                 
                 # Update display data with scrolling effect
                 self._update_display_data()
+            # If no real data, don't add anything - waterfall will show empty
             
             self.update_counter += 1
                 
@@ -93,12 +94,12 @@ class WaterfallDisplay:
             if fft_data is not None:
                 return self._process_fft_data(fft_data)
             
-            # Fallback to simulated data for demonstration
-            return self._generate_simulated_data()
+            # No real data available - return None to show empty waterfall
+            return None
             
         except Exception as e:
             logger.error(f"Error getting FFT data: {e}")
-            return self._generate_simulated_data()
+            return None
     
     def _fetch_from_dump1090_api(self) -> Optional[List[float]]:
         """Fetch FFT data from dump1090 HTTP API."""
@@ -169,7 +170,7 @@ class WaterfallDisplay:
             
         except Exception as e:
             logger.error(f"Error processing FFT data: {e}")
-            return self._generate_simulated_data()
+            return None
     
     def _generate_simulated_data(self) -> List[int]:
         """Generate realistic simulated ADS-B spectrum data."""
@@ -2125,7 +2126,15 @@ class Dashboard:
                 available_height = min(self.waterfall_height - 1, 
                                      self.screen_height - start_y - self.status_height - self.footer_height - 2)
                 if available_height > 0:
-                    self.waterfall.draw(screen, start_y + 1, 2)
+                    # Check if waterfall has real data
+                    if len(self.waterfall.data) > 0:
+                        self.waterfall.draw(screen, start_y + 1, 2)
+                    else:
+                        # Show message when no FFT data is available
+                        try:
+                            screen.addstr(start_y + 1, 2, "No FFT data available - waterfall requires dump1090 with --write-json or HTTP API", curses.color_pair(4))
+                        except curses.error:
+                            pass
                 else:
                     # Show message if no space for waterfall
                     try:

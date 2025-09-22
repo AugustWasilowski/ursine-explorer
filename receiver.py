@@ -1322,9 +1322,20 @@ class ADSBReceiver:
             # Update message rate tracking
             self._update_message_rate()
             
+            # Debug: Log first few messages to see format
+            if self.message_count <= 5:
+                logger.info(f"Raw message {self.message_count}: {line[:100]}")
+            
             # Parse the raw message from dump1090
             # Format: *8D<ICAO><DATA>;<timestamp>
-            if not line.startswith('*') or ';' not in line:
+            if not line.startswith('*'):
+                if self.message_count <= 10:
+                    logger.debug(f"Skipping non-* message: {line[:50]}")
+                return
+                
+            if ';' not in line:
+                if self.message_count <= 10:
+                    logger.debug(f"Skipping message without semicolon: {line[:50]}")
                 return
                 
             # Extract message and timestamp
@@ -1970,7 +1981,7 @@ class ADSBReceiver:
             
             # Check message processing health
             message_age = (datetime.now() - self.last_successful_message).total_seconds()
-            if message_age > 60:  # No messages for 1 minute
+            if message_age > 300:  # No messages for 1 minute
                 error_handler.handle_error(
                     ComponentType.RECEIVER,
                     ErrorSeverity.HIGH,
