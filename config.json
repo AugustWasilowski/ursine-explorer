@@ -1,8 +1,9 @@
 {
   "receiver": {
     "dump1090_path": "/usr/local/bin/dump1090",
-    "update_interval": 1.0,
-    "cleanup_interval": 30
+    "reference_lat": 41.9481,
+    "reference_lon": -87.6555,
+    "alert_interval": 300
   },
   "radio": {
     "frequency": 1090100000,
