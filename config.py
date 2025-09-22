@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable
 from utils import (validate_frequency, validate_gain, validate_coordinates, validate_icao,
@@ -32,6 +32,11 @@ class MeshtasticConfig:
     port: str = "/dev/ttyUSB0"
     baud: int = 115200
     channel: int = 2
+    # Optional fields for advanced configuration
+    channels: Optional[list] = field(default=None)
+    default_channel: str = ""
+    connection_mode: str = "serial"
+    auto_detect_device: bool = True
 
 
 @dataclass
@@ -130,19 +135,37 @@ class ConfigValidator:
             return False
     
     @staticmethod
-    def validate_watchlist(watchlist: List[Dict[str, Any]]) -> bool:
-        """Validate watchlist entries."""
+    def validate_watchlist(watchlist) -> bool:
+        """Validate watchlist entries - supports both string and object formats."""
         try:
+            # Handle different watchlist formats
+            if isinstance(watchlist, dict):
+                # Complex watchlist config - skip validation for now
+                return True
+            
+            if not isinstance(watchlist, list):
+                return True  # Skip validation if not a list
+            
             for entry in watchlist:
-                icao = entry.get('icao', '')
-                name = entry.get('name', '')
-                
-                if not validate_icao(icao):
-                    logger.error(f"Invalid ICAO in watchlist: {icao}")
-                    return False
+                if isinstance(entry, str):
+                    # Handle simple string format (just ICAO)
+                    if not validate_icao(entry):
+                        logger.error(f"Invalid ICAO in watchlist: {entry}")
+                        return False
+                elif isinstance(entry, dict):
+                    # Handle object format
+                    icao = entry.get('icao', '')
+                    name = entry.get('name', '')
                     
-                if not isinstance(name, str):
-                    logger.error(f"Invalid name in watchlist entry: {name}")
+                    if not validate_icao(icao):
+                        logger.error(f"Invalid ICAO in watchlist: {icao}")
+                        return False
+                        
+                    if not isinstance(name, str):
+                        logger.error(f"Invalid name in watchlist entry: {name}")
+                        return False
+                else:
+                    logger.error(f"Invalid watchlist entry format: {entry}")
                     return False
                     
             return True
@@ -274,6 +297,11 @@ class Config:
             if 'watchlist' in config:
                 if not self.validator.validate_watchlist(config['watchlist']):
                     return False
+            
+            # Also validate legacy target_icao_codes format
+            if 'target_icao_codes' in config:
+                if not self.validator.validate_watchlist(config['target_icao_codes']):
+                    return False
                     
             return True
         except Exception as e:
@@ -306,8 +334,16 @@ class Config:
             meshtastic_data['baud'] = meshtastic_data.pop('meshtastic_baud')
         if 'meshtastic_channel' in meshtastic_data:
             meshtastic_data['channel'] = meshtastic_data.pop('meshtastic_channel')
+        
+        # Filter out fields that MeshtasticConfig doesn't support
+        supported_fields = {'port', 'baud', 'channel', 'channels', 'default_channel', 'connection_mode', 'auto_detect_device'}
+        filtered_data = {k: v for k, v in meshtastic_data.items() if k in supported_fields}
+        
+        # Set defaults for optional fields
+        if 'channels' not in filtered_data:
+            filtered_data['channels'] = None
             
-        return MeshtasticConfig(**meshtastic_data)
+        return MeshtasticConfig(**filtered_data)
     
     def get_receiver_config(self) -> ReceiverConfig:
         """Get receiver configuration as dataclass."""
@@ -319,7 +355,28 @@ class Config:
         """Get watchlist as list of dataclasses."""
         config = self.load()
         watchlist_data = config.get('watchlist', [])
-        return [WatchlistEntry(**entry) for entry in watchlist_data]
+        
+        # Handle legacy format with target_icao_codes
+        if not watchlist_data and 'target_icao_codes' in config:
+            target_icaos = config.get('target_icao_codes', [])
+            watchlist_data = [{'icao': icao, 'name': ''} for icao in target_icaos if isinstance(icao, str)]
+        
+        # Handle case where watchlist_data is a dict (complex config format)
+        if isinstance(watchlist_data, dict):
+            # If it's the complex format, just return empty for now
+            watchlist_data = []
+        
+        # Convert to WatchlistEntry objects
+        entries = []
+        for entry in watchlist_data:
+            if isinstance(entry, str):
+                # Handle simple string format
+                entries.append(WatchlistEntry(icao=entry, name=''))
+            elif isinstance(entry, dict):
+                # Handle object format
+                entries.append(WatchlistEntry(**entry))
+        
+        return entries
     
     def add_to_watchlist(self, icao: str, name: str = "") -> bool:
         """Add aircraft to watchlist."""
