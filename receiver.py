@@ -1327,16 +1327,24 @@ class ADSBReceiver:
             if self.message_count <= 5:
                 logger.info(f"Raw message {self.message_count}: {line[:100]}")
             
-            # Parse the raw message from dump1090
-            # Format: *8D<ICAO><DATA>;<timestamp>
-            if not line.startswith('*'):
-                if self.message_count <= 10:
-                    logger.debug(f"Skipping non-* message: {line[:50]}")
+            # Parse the message from dump1090
+            # Handle both Beast format (*8D...) and SBS format (MSG,...)
+            if line.startswith('*'):
+                # Beast format: *8D<ICAO><DATA>;<timestamp>
+                if ';' not in line:
+                    if self.message_count <= 10:
+                        logger.debug(f"Skipping Beast message without semicolon: {line[:50]}")
+                    return
+                # Process Beast format (existing code would go here)
+                logger.debug(f"Beast format not implemented yet: {line[:50]}")
                 return
-                
-            if ';' not in line:
+            elif line.startswith('MSG'):
+                # SBS format: MSG,type,session,aircraft,icao,flight,date,time,date,time,callsign,altitude,speed,track,lat,lon,vertical_rate,squawk,alert,emergency,spi,on_ground
+                self._process_sbs_message(line)
+                return
+            else:
                 if self.message_count <= 10:
-                    logger.debug(f"Skipping message without semicolon: {line[:50]}")
+                    logger.debug(f"Skipping unknown format message: {line[:50]}")
                 return
                 
             # Extract message and timestamp
@@ -1377,6 +1385,48 @@ class ADSBReceiver:
         except Exception as e:
             self.error_count += 1
             logger.error(f"Error processing message line '{line[:50]}...': {e}")
+    
+    def _process_sbs_message(self, line: str) -> None:
+        """Process SBS (BaseStation) format message."""
+        try:
+            # SBS format: MSG,type,session,aircraft,icao,flight,date,time,date,time,callsign,altitude,speed,track,lat,lon,vertical_rate,squawk,alert,emergency,spi,on_ground
+            parts = line.split(',')
+            
+            if len(parts) < 22:
+                return
+            
+            # Extract fields
+            icao = parts[4].strip()
+            if not icao:
+                return
+                
+            # Build aircraft data from SBS message
+            aircraft_data = {
+                'icao': icao,
+                'callsign': parts[10].strip() if parts[10].strip() else None,
+                'altitude': int(parts[11]) if parts[11].strip() else None,
+                'speed': int(parts[12]) if parts[12].strip() else None,
+                'track': int(parts[13]) if parts[13].strip() else None,
+                'latitude': float(parts[14]) if parts[14].strip() else None,
+                'longitude': float(parts[15]) if parts[15].strip() else None,
+                'vertical_rate': int(parts[16]) if parts[16].strip() else None,
+                'squawk': parts[17].strip() if parts[17].strip() else None
+            }
+            
+            # Update aircraft tracking
+            aircraft = self.aircraft_tracker.update_aircraft(icao, aircraft_data)
+            if aircraft:
+                self.valid_message_count += 1
+                # Check watchlist and send alerts if needed
+                self.check_watchlist(aircraft)
+                
+                # Log first few successful aircraft updates
+                if self.valid_message_count <= 5:
+                    logger.info(f"Successfully processed aircraft {icao}: {aircraft_data}")
+            
+        except Exception as e:
+            logger.error(f"Error processing SBS message: {e}")
+            logger.debug(f"SBS message: {line}")
     
     def check_watchlist(self, aircraft) -> None:
         """Check aircraft against watchlist and send alerts with smart throttling."""
