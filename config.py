@@ -312,6 +312,16 @@ class Config:
         """Get radio configuration as dataclass."""
         config = self.load()
         radio_data = config.get('radio', {})
+        
+        # Handle legacy config format where radio settings are at root level
+        if not radio_data:
+            radio_data = {
+                'frequency': config.get('frequency', 1090000000),
+                'lna_gain': config.get('lna_gain', 40),
+                'vga_gain': config.get('vga_gain', 20),
+                'enable_amp': config.get('enable_hackrf_amp', True)
+            }
+        
         return RadioConfig(**radio_data)
     
     def get_meshtastic_config(self) -> MeshtasticConfig:
@@ -349,6 +359,24 @@ class Config:
         """Get receiver configuration as dataclass."""
         config = self.load()
         receiver_data = config.get('receiver', {})
+        
+        # Handle legacy config format where receiver settings are at root level
+        if not receiver_data:
+            receiver_data = {
+                'dump1090_path': config.get('dump1090_path', '/usr/bin/dump1090-fa'),
+                'reference_lat': config.get('reference_lat', 41.9481),
+                'reference_lon': config.get('reference_lon', -87.6555),
+                'alert_interval': config.get('alert_interval_sec', 300)
+            }
+            
+            # Also check pymodes section for reference position
+            pymodes = config.get('pymodes', {})
+            if pymodes:
+                ref_pos = pymodes.get('reference_position', {})
+                if ref_pos:
+                    receiver_data['reference_lat'] = ref_pos.get('latitude', receiver_data['reference_lat'])
+                    receiver_data['reference_lon'] = ref_pos.get('longitude', receiver_data['reference_lon'])
+        
         return ReceiverConfig(**receiver_data)
     
     def get_watchlist(self) -> List[WatchlistEntry]:
